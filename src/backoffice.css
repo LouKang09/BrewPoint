@@ -86,3 +86,5 @@
 .receipt-totals{margin-left:auto;width:min(360px,100%);padding:12px 16px}.receipt-totals>div{display:flex;justify-content:space-between;padding:5px 0;font-size:9px}.receipt-totals .grand{border-top:1px solid var(--line);margin-top:4px;padding-top:9px}.receipt-totals .grand strong{font-size:18px}
 @media(max-width:900px){.customer-history-head{grid-template-columns:1fr 1fr}.receipt-detail-meta{grid-template-columns:1fr 1fr}}
 @media(max-width:520px){.customer-history-head,.receipt-detail-meta{grid-template-columns:1fr}.panel-footer{flex-direction:column}.panel-footer .btn{width:100%}}
+
+.admin-side-actions{margin-top:auto;display:flex;flex-direction:column;gap:9px}.admin-logout{color:#9fb0c0!important;padding:7px 4px!important}
