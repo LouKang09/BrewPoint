@@ -432,3 +432,12 @@
 @media(max-width:650px){
   .preview-form-grid,.preview-form-grid.two{grid-template-columns:1fr}.preview-form-grid .span-two{grid-column:auto}.kds-grid{grid-template-columns:1fr}.flag-list{grid-template-columns:1fr}.plan-mix-preview{grid-template-columns:1fr}.summary-detail-metrics,.preview-metrics{grid-template-columns:1fr 1fr}.billing-card-row,.billing-owner-required{align-items:flex-start;flex-direction:column}.billing-card-row .row-actions{width:100%;justify-content:space-between}
 }
+
+
+/* Unified tenant / landlord sign-in selector */
+.auth-portal-select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:10px;background:#fffdfa;color:#10253d;padding:0 12px;font:inherit;font-size:10px;font-weight:750;outline:none}
+.auth-portal-select:focus{border-color:var(--orange);box-shadow:0 0 0 3px rgba(242,138,19,.10)}
+.field-help{display:block;margin-top:6px;color:var(--muted);font-size:8px;line-height:1.45;font-weight:600}
+:root[data-theme="dark"] .auth-portal-select{background:#102235;color:#eef4f8;border-color:#385064}
+:root[data-theme="dark"] .auth-portal-select option{background:#102235;color:#eef4f8}
+:root[data-theme="dark"] .field-help{color:#91a5b7}
