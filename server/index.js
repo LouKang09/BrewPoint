@@ -230,6 +230,7 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    ALTER TABLE branches ADD COLUMN IF NOT EXISTS is_maintenance BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_qr_data TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_account_name TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_account_number TEXT;
@@ -365,7 +366,11 @@ async function resolvePromoRules(client,businessId,promo){
     const food=rows.find(x=>String(x.name).toLowerCase()==="food")||rows.find(x=>String(x.name).toLowerCase().includes("food"));
     if(coffee&&food)rules=[{categoryId:String(coffee.id),qty:1},{categoryId:String(food.id),qty:1}];
   }
-  return rules.map(r=>({categoryId:String(r.categoryId||""),qty:Math.max(1,Number(r.qty||1))})).filter(r=>r.categoryId);
+  return rules.map(r=>({
+    categoryId:String(r.categoryId||""),
+    qty:Math.max(1,Number(r.qty||1)),
+    productIds:Array.isArray(r.productIds)?r.productIds.map(String).filter(Boolean):[]
+  })).filter(r=>r.categoryId);
 }
 
 app.get("/api/health", async (_req, res) => {
@@ -631,13 +636,15 @@ app.post("/api/pos/checkout", auth, requireContext, async (req, res) => {
   if (!regularItems.length && !promoBundles.length) return res.status(400).json({ message: "Add at least one product or promo." });
   if (paymentMethod === "gcash" && !paymentReference) return res.status(400).json({ message: "Enter the GCash payment reference after the customer scans and pays." });
   if (specialDiscountType && promoBundles.length) return res.status(400).json({ message: "Senior/PWD 20% discount cannot be combined with an existing promo." });
+  if (specialDiscountType && !specialDiscountReference) return res.status(400).json({ message: "Senior/PWD ID or reference is required." });
   if (ctx.branch_id && String(ctx.branch_id)!==branchId) return res.status(403).json({message:"You can only take sales for your assigned branch."});
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const branch = await client.query("SELECT id FROM branches WHERE id=$1 AND business_id=$2 AND is_active=true", [branchId, ctx.business_id]);
+    const branch = await client.query("SELECT id,name,is_maintenance FROM branches WHERE id=$1 AND business_id=$2 AND is_active=true", [branchId, ctx.business_id]);
     if (!branch.rowCount) throw new Error("Invalid branch.");
+    if (branch.rows[0].is_maintenance) throw new Error(branch.rows[0].name+" is currently under maintenance. POS checkout is temporarily disabled.");
 
     const bundleSelections = promoBundles.flatMap(b=>Array.isArray(b.selections)?b.selections:[]);
     const allRequested = [...regularItems,...bundleSelections];
@@ -700,8 +707,13 @@ app.post("/api/pos/checkout", auth, requireContext, async (req, res) => {
       if(selectedCount!==expected)throw new Error("Complete all selections for "+promo.name+".");
 
       for(const rule of rules){
-        const matched=selections.filter(x=>String(productMap.get(String(x.productId))?.category_id)===String(rule.categoryId)).reduce((sum,x)=>sum+Number(x.qty||0),0);
+        const matchingSelections=selections.filter(x=>String(productMap.get(String(x.productId))?.category_id)===String(rule.categoryId));
+        const matched=matchingSelections.reduce((sum,x)=>sum+Number(x.qty||0),0);
         if(matched!==Number(rule.qty))throw new Error(promo.name+" requires "+rule.qty+" item(s) from its configured category.");
+        if(Array.isArray(rule.productIds)&&rule.productIds.length){
+          const allowedProducts=new Set(rule.productIds.map(String));
+          if(matchingSelections.some(x=>!allowedProducts.has(String(x.productId))))throw new Error("One selected product is not allowed for "+promo.name+".");
+        }
       }
       const allowed=new Set(rules.map(r=>String(r.categoryId)));
       if(selections.some(x=>!allowed.has(String(productMap.get(String(x.productId))?.category_id))))throw new Error("A selected promo item is outside the promo rules.");
@@ -936,12 +948,20 @@ app.post("/api/promos", auth, requireContext, allow("owner","admin","manager"), 
   const name=String(req.body.name||"").trim();
   const type=["set_price","fixed_discount","percentage"].includes(req.body.promoType)?req.body.promoType:"fixed_discount";
   const value=Number(req.body.value);
-  const rules=Array.isArray(req.body.rules)?req.body.rules.map(r=>({categoryId:String(r.categoryId||""),qty:Math.max(1,Number(r.qty||1))})).filter(r=>r.categoryId):[];
+  const rules=Array.isArray(req.body.rules)?req.body.rules.map(r=>({
+    categoryId:String(r.categoryId||""),
+    qty:Math.max(1,Number(r.qty||1)),
+    productIds:Array.isArray(r.productIds)?r.productIds.map(String).filter(Boolean):[]
+  })).filter(r=>r.categoryId):[];
   if(name.length<2||!value||value<=0)return res.status(400).json({message:"Enter a valid promo name and value."});
   if(type==="percentage"&&value>100)return res.status(400).json({message:"Percentage cannot exceed 100."});
   for(const rule of rules){
     const found=await pool.query("SELECT id FROM product_categories WHERE id=$1 AND business_id=$2 AND is_active=true",[rule.categoryId,req.context.business_id]);
     if(!found.rowCount)return res.status(400).json({message:"One promo category is invalid."});
+    if(rule.productIds.length){
+      const allowed=await pool.query("SELECT id FROM products WHERE business_id=$1 AND category_id=$2 AND id = ANY($3::bigint[]) AND is_active=true",[req.context.business_id,rule.categoryId,rule.productIds]);
+      if(allowed.rowCount!==rule.productIds.length)return res.status(400).json({message:"A permitted promo product does not belong to its selected category."});
+    }
   }
   if(req.body.id){
     const {rows}=await pool.query("UPDATE promos SET name=$1,promo_type=$2,value=$3,is_active=$4,rules=$5::jsonb WHERE id=$6 AND business_id=$7 RETURNING id",[name,type,value,req.body.isActive!==false,JSON.stringify(rules),String(req.body.id),req.context.business_id]);
@@ -1033,6 +1053,26 @@ app.post("/api/branches", auth, requireContext, allow("owner","admin"), async(re
   const {rows}=await pool.query("INSERT INTO branches(business_id,name,address) VALUES($1,$2,$3) RETURNING id",[req.context.business_id,name,String(req.body.address||"").trim()||null]);
   await audit(pool,req.context.business_id,req.user.id,"BRANCH_CREATED","branch",rows[0].id,name);
   res.json({id:String(rows[0].id)});
+});
+
+app.post("/api/branches/:id/update", auth, requireContext, allow("owner","admin"), async(req,res)=>{
+  const branchId=String(req.params.id||"");
+  const name=String(req.body.name||"").trim();
+  const address=String(req.body.address||"").trim();
+  if(name.length<2)return res.status(400).json({message:"Branch name is required."});
+  const {rows}=await pool.query("UPDATE branches SET name=$1,address=$2 WHERE id=$3 AND business_id=$4 RETURNING id,name",[name,address||null,branchId,req.context.business_id]);
+  if(!rows[0])return res.status(404).json({message:"Branch not found."});
+  await audit(pool,req.context.business_id,req.user.id,"BRANCH_UPDATED","branch",branchId,name);
+  res.json({ok:true});
+});
+
+app.post("/api/branches/:id/maintenance", auth, requireContext, allow("owner","admin"), async(req,res)=>{
+  const branchId=String(req.params.id||"");
+  const isMaintenance=Boolean(req.body.isMaintenance);
+  const {rows}=await pool.query("UPDATE branches SET is_maintenance=$1 WHERE id=$2 AND business_id=$3 RETURNING id,name,is_maintenance",[isMaintenance,branchId,req.context.business_id]);
+  if(!rows[0])return res.status(404).json({message:"Branch not found."});
+  await audit(pool,req.context.business_id,req.user.id,isMaintenance?"BRANCH_MAINTENANCE_ENABLED":"BRANCH_MAINTENANCE_DISABLED","branch",branchId,rows[0].name);
+  res.json({ok:true,isMaintenance:rows[0].is_maintenance});
 });
 
 app.get("/api/reports", auth, requireContext, async(req,res)=>{
