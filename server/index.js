@@ -716,6 +716,16 @@ app.post("/api/ingredients/save", auth, requireContext, allow("owner","admin","m
   }catch(error){res.status(400).json({message:error.code==="23505"?"Ingredient name already exists.":"Unable to save ingredient."});}
 });
 
+app.delete("/api/ingredients/:id", auth, requireContext, allow("owner","admin","manager","inventory"), async(req,res)=>{
+  const ingredientId=String(req.params.id||"");
+  const used=await pool.query("SELECT count(*)::int AS count FROM product_ingredients WHERE ingredient_id=$1 AND business_id=$2",[ingredientId,req.context.business_id]);
+  if(Number(used.rows[0]?.count||0)>0)return res.status(400).json({message:"This ingredient is used in product recipes. Remove it from those recipes first."});
+  const {rows}=await pool.query("DELETE FROM ingredients WHERE id=$1 AND business_id=$2 RETURNING id,name",[ingredientId,req.context.business_id]);
+  if(!rows[0])return res.status(404).json({message:"Ingredient not found."});
+  await audit(pool,req.context.business_id,req.user.id,"INGREDIENT_DELETED","ingredient",ingredientId,rows[0].name);
+  res.json({ok:true});
+});
+
 app.post("/api/products/save", auth, requireContext, allow("owner","admin","manager"), async (req,res)=>{
   const name=String(req.body.name||"").trim();
   const categoryId=String(req.body.categoryId||"");
@@ -750,6 +760,34 @@ app.post("/api/products/save", auth, requireContext, allow("owner","admin","mana
   }catch(error){await client.query("ROLLBACK");res.status(400).json({message:error.message});}finally{client.release();}
 });
 
+app.delete("/api/products/:id", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
+  const productId=String(req.params.id||"");
+  const {rows}=await pool.query("DELETE FROM products WHERE id=$1 AND business_id=$2 RETURNING id,name",[productId,req.context.business_id]);
+  if(!rows[0])return res.status(404).json({message:"Product not found."});
+  await audit(pool,req.context.business_id,req.user.id,"PRODUCT_DELETED","product",productId,rows[0].name);
+  res.json({ok:true});
+});
+
+app.post("/api/categories", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
+  const name=String(req.body.name||"").trim();
+  if(name.length<2)return res.status(400).json({message:"Category name is required."});
+  try{
+    const {rows}=await pool.query("INSERT INTO product_categories(business_id,name,sort_order) VALUES($1,$2,(SELECT COALESCE(max(sort_order),0)+1 FROM product_categories WHERE business_id=$1)) RETURNING id,name",[req.context.business_id,name]);
+    await audit(pool,req.context.business_id,req.user.id,"CATEGORY_CREATED","category",rows[0].id,name);
+    res.json({id:String(rows[0].id),name:rows[0].name});
+  }catch(error){res.status(400).json({message:error.code==="23505"?"Category already exists.":"Unable to create category."});}
+});
+
+app.delete("/api/categories/:id", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
+  const categoryId=String(req.params.id||"");
+  const used=await pool.query("SELECT count(*)::int AS count FROM products WHERE category_id=$1 AND business_id=$2",[categoryId,req.context.business_id]);
+  if(Number(used.rows[0]?.count||0)>0)return res.status(400).json({message:"Move or delete products in this category first."});
+  const {rows}=await pool.query("DELETE FROM product_categories WHERE id=$1 AND business_id=$2 RETURNING id,name",[categoryId,req.context.business_id]);
+  if(!rows[0])return res.status(404).json({message:"Category not found."});
+  await audit(pool,req.context.business_id,req.user.id,"CATEGORY_DELETED","category",categoryId,rows[0].name);
+  res.json({ok:true});
+});
+
 app.post("/api/expenses", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
   const amount=Number(req.body.amount);
   if(!amount||amount<=0)return res.status(400).json({message:"Expense amount must be greater than zero."});
@@ -772,6 +810,12 @@ app.post("/api/promos", auth, requireContext, allow("owner","admin","manager"), 
   const value=Number(req.body.value);
   if(name.length<2||!value||value<=0)return res.status(400).json({message:"Enter a valid promo name and value."});
   if(type==="percentage"&&value>100)return res.status(400).json({message:"Percentage cannot exceed 100."});
+  if(req.body.id){
+    const {rows}=await pool.query("UPDATE promos SET name=$1,promo_type=$2,value=$3,is_active=$4 WHERE id=$5 AND business_id=$6 RETURNING id",[name,type,value,req.body.isActive!==false,String(req.body.id),req.context.business_id]);
+    if(!rows[0])return res.status(404).json({message:"Promo not found."});
+    await audit(pool,req.context.business_id,req.user.id,"PROMO_UPDATED","promo",rows[0].id,name);
+    return res.json({id:String(rows[0].id)});
+  }
   const {rows}=await pool.query(`INSERT INTO promos(business_id,name,promo_type,value,is_active) VALUES($1,$2,$3,$4,true) RETURNING id`,[req.context.business_id,name,type,value]);
   await audit(pool,req.context.business_id,req.user.id,"PROMO_CREATED","promo",rows[0].id,name);
   res.json({id:String(rows[0].id)});
