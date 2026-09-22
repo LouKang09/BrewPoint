@@ -1,0 +1,69 @@
+/* BrewPoint back-office enhancements inspired by familiar POS analytics patterns */
+.auth-official-logo{width:min(360px,78%);max-height:240px;object-fit:contain;border-radius:24px;box-shadow:0 20px 55px rgba(0,0,0,.22);margin-bottom:28px}
+.auth-side .auth-official-logo{background:#f5e5cf}
+
+.sales-summary-page{display:flex;flex-direction:column;gap:14px}
+.sales-filter-bar{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow)}
+.sales-filter-title h2{margin:0;font-size:21px;letter-spacing:-.03em}
+.sales-filter-title p{margin:4px 0 14px;color:var(--muted);font-size:10px}
+.sales-filters{display:grid;grid-template-columns:140px 145px auto 145px 160px 170px auto;gap:8px;align-items:center}
+.sales-filters input,.sales-filters select{height:39px;background:#fff}.filter-to{font-size:9px;color:var(--muted);text-align:center;font-weight:700}
+.sales-kpis{display:grid;grid-template-columns:repeat(5,1fr);background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
+.sales-kpi{appearance:none;border:0;border-right:1px solid var(--line);background:white;padding:15px 16px;text-align:left;cursor:pointer;position:relative}
+.sales-kpi:last-child{border-right:0}.sales-kpi:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:transparent}
+.sales-kpi.active:after{background:var(--orange)}
+.sales-kpi span,.sales-kpi small{display:block}.sales-kpi span{font-size:9px;color:#64707a}.sales-kpi strong{display:block;font-size:21px;letter-spacing:-.04em;margin:6px 0 3px}.sales-kpi small{font-size:8px;color:#8b949c}.sales-kpi small.up{color:var(--green)}.sales-kpi small.down{color:var(--red)}
+.sales-chart-card,.sales-table-card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
+.chart-head,.sales-table-head{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:14px 17px;border-bottom:1px solid var(--line)}
+.chart-head h3,.sales-table-head h3{margin:0;font-size:13px}.chart-head p,.sales-table-head p{margin:3px 0 0;color:var(--muted);font-size:8px}
+.chart-toggle{display:flex;align-items:center;gap:4px}.chart-toggle button{border:1px solid var(--line);background:#fff;padding:6px 9px;border-radius:7px;font-size:8px;font-weight:800;color:#60707d;cursor:pointer}.chart-toggle button.active{background:var(--navy);color:#fff;border-color:var(--navy)}.chart-toggle span{margin-left:5px;color:var(--muted);font-size:8px}
+.sales-chart{padding:8px 12px 3px;overflow:hidden}.sales-chart svg{display:block;width:100%;height:auto;min-height:250px}.chart-grid{stroke:#e9e6e1;stroke-width:1}.chart-y,.chart-x{font-size:9px;fill:#7f8993}.chart-area{fill:rgba(242,138,19,.11);stroke:none}.chart-line{fill:none;stroke:var(--orange);stroke-width:3}.chart-dot{fill:#fff;stroke:var(--orange);stroke-width:3}.chart-bar{fill:rgba(242,138,19,.72)}.chart-empty,.dashboard-loading{min-height:270px;display:grid;place-items:center;background:#fff;border:1px solid var(--line);border-radius:16px;color:var(--muted);font-size:11px}
+.table-scroll{overflow:auto}
+.report-table{width:100%;border-collapse:collapse;min-width:760px;background:#fff}
+.report-table thead th{background:#faf8f4;color:#68727b;font-size:8px;text-transform:uppercase;letter-spacing:.07em;text-align:left;padding:11px 13px;border-bottom:1px solid var(--line);white-space:nowrap}
+.report-table tbody td{padding:11px 13px;border-bottom:1px solid #eeeae4;font-size:9px;vertical-align:middle}
+.report-table tbody tr:hover{background:#fffaf3}.report-table b,.report-table small{display:block}.report-table small{font-size:7px;color:var(--muted);margin-top:2px}
+.report-table select{min-width:130px;padding:7px 8px;font-size:9px}
+.report-tabs{display:flex;gap:6px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:13px;padding:8px}
+.report-tabs button{border:1px solid transparent;background:transparent;border-radius:8px;padding:8px 11px;font-size:9px;font-weight:800;color:#63707c;cursor:pointer}.report-tabs button.active{background:var(--navy);color:#fff}
+.report-filter-actions{flex-wrap:wrap;justify-content:flex-end}.report-filter-actions select{width:auto;min-width:120px}
+.report-metrics .metric strong{font-size:18px}
+.up{color:var(--green)!important}.down{color:var(--red)!important}
+
+.product-costing-layout{grid-template-columns:1.45fr 1fr}
+.compact-grid{padding:0;grid-template-columns:repeat(3,1fr)}
+.costing-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.costing-summary>div{background:#f8f5ef;border:1px solid var(--line);border-radius:10px;padding:10px}.costing-summary span,.costing-summary strong{display:block}.costing-summary span{font-size:7px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:850}.costing-summary strong{font-size:14px;margin-top:5px}
+.recipe-edit-row{display:grid;grid-template-columns:minmax(0,1.35fr) 85px 95px 30px;gap:8px;align-items:center;background:#f7f4ef;border:1px solid #ebe5dc;border-radius:9px;padding:8px}
+.recipe-edit-row b,.recipe-edit-row small,.recipe-edit-row span,.recipe-edit-row strong{display:block}.recipe-edit-row b{font-size:9px}.recipe-edit-row small,.recipe-edit-row span{font-size:7px;color:var(--muted)}.recipe-edit-row strong{font-size:9px;margin-top:2px}.recipe-edit-row label{font-size:7px}.recipe-edit-row input{padding:7px}
+.recipe-hint{font-size:8px;color:var(--muted);line-height:1.5;margin:2px 0}.danger-icon{color:var(--red)!important}
+.promo-list .btn.danger{padding:6px 8px}
+
+.billing-plan-card{display:flex;flex-direction:column}
+.billing-feature-list{list-style:none;padding:0;margin:14px 0 18px;display:flex;flex-direction:column;gap:8px;flex:1}
+.billing-feature-list li{display:flex;gap:7px;align-items:flex-start;font-size:9px;line-height:1.4;color:#53616d}.billing-feature-list svg{color:var(--green);flex:none;margin-top:1px}
+
+.admin-toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:13px;padding:10px 12px}
+.admin-toolbar input{max-width:520px}
+.admin-table{min-width:1050px}
+.owner-main>.metrics{margin-top:16px}
+.owner-side .btn{margin-top:auto}
+.owner-side nav button{width:100%}
+.owner-head{padding-bottom:4px}
+.owner-main .panel{margin-top:14px}
+
+@media(max-width:1250px){
+  .sales-filters{grid-template-columns:repeat(3,minmax(140px,1fr))}.filter-to{display:none}.sales-filters .btn{grid-column:auto}
+  .sales-kpis{grid-template-columns:repeat(3,1fr)}.sales-kpi{border-bottom:1px solid var(--line)}
+  .product-costing-layout{grid-template-columns:1fr}
+}
+@media(max-width:800px){
+  .sales-filters{grid-template-columns:1fr 1fr}.sales-filter-title{margin-bottom:8px}.sales-kpis{grid-template-columns:1fr 1fr}.sales-kpi strong{font-size:17px}
+  .report-filter-actions{width:100%;justify-content:stretch}.report-filter-actions select,.report-filter-actions .btn{flex:1;min-width:130px}
+  .recipe-edit-row{grid-template-columns:1fr 80px}.recipe-edit-row>div:nth-child(3){display:none}
+  .costing-summary{grid-template-columns:1fr}
+}
+@media(max-width:560px){
+  .sales-filters{grid-template-columns:1fr}.sales-kpis{grid-template-columns:1fr}.sales-kpi{border-right:0}.chart-head,.sales-table-head{align-items:flex-start;flex-direction:column}
+  .compact-grid{grid-template-columns:1fr}.auth-official-logo{width:86%;max-height:220px}
+}
