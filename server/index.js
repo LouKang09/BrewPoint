@@ -777,6 +777,14 @@ app.post("/api/promos", auth, requireContext, allow("owner","admin","manager"), 
   res.json({id:String(rows[0].id)});
 });
 
+app.delete("/api/promos/:id", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
+  const promoId=String(req.params.id||"");
+  const {rows}=await pool.query("DELETE FROM promos WHERE id=$1 AND business_id=$2 RETURNING id,name",[promoId,req.context.business_id]);
+  if(!rows[0])return res.status(404).json({message:"Promo not found."});
+  await audit(pool,req.context.business_id,req.user.id,"PROMO_DELETED","promo",promoId,rows[0].name);
+  res.json({ok:true});
+});
+
 app.post("/api/staff", auth, requireContext, allow("owner","admin"), async(req,res)=>{
   const email=String(req.body.email||"").trim().toLowerCase();
   const displayName=String(req.body.displayName||"").trim();
@@ -825,37 +833,136 @@ app.post("/api/branches", auth, requireContext, allow("owner","admin"), async(re
 });
 
 app.get("/api/reports", auth, requireContext, async(req,res)=>{
-  const period=["daily","weekly","monthly","yearly"].includes(req.query.period)?req.query.period:"monthly";
-  const startAt=reportStart(period);
-  const businessId=req.context.business_id;
-  const [sales,items,expenses,ingredients,recipes]=await Promise.all([
-    pool.query(`SELECT s.*,b.name AS branch_name,u.display_name AS cashier_name FROM sales s JOIN branches b ON b.id=s.branch_id LEFT JOIN users u ON u.id=s.cashier_user_id WHERE s.business_id=$1 AND s.created_at >= $2 ORDER BY s.created_at DESC`,[businessId,startAt]),
-    pool.query(`SELECT si.*,s.status FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE s.business_id=$1 AND s.created_at >= $2`,[businessId,startAt]),
-    pool.query("SELECT amount FROM expenses WHERE business_id=$1 AND spent_at >= $2",[businessId,startAt]),
-    pool.query("SELECT id,cost_per_unit FROM ingredients WHERE business_id=$1",[businessId]),
-    pool.query("SELECT product_id,ingredient_id,qty_required FROM product_ingredients WHERE business_id=$1",[businessId])
-  ]);
-  const completed=sales.rows.filter(s=>s.status==="completed");
-  const itemRows=items.rows.filter(i=>i.status==="completed");
-  const costMap=new Map(ingredients.rows.map(i=>[String(i.id),Number(i.cost_per_unit)]));
-  const recipeCost=new Map();
-  for(const recipe of recipes.rows)recipeCost.set(String(recipe.product_id),(recipeCost.get(String(recipe.product_id))||0)+Number(recipe.qty_required)*(costMap.get(String(recipe.ingredient_id))||0));
-  let estimatedCogs=0;const productMap=new Map();
-  for(const item of itemRows){
-    estimatedCogs+=(recipeCost.get(String(item.product_id))||0)*Number(item.qty);
-    const p=productMap.get(item.product_name)||{name:item.product_name,qty:0,revenue:0};
-    p.qty+=Number(item.qty);p.revenue+=Number(item.line_total);productMap.set(item.product_name,p);
+  try{
+    const period=["daily","weekly","monthly","yearly"].includes(req.query.period)?req.query.period:"monthly";
+    const startAt=req.query.start?new Date(String(req.query.start)+"T00:00:00+08:00"):reportStart(period);
+    const endAt=req.query.end?new Date(String(req.query.end)+"T23:59:59.999+08:00"):new Date();
+    if(Number.isNaN(startAt.getTime())||Number.isNaN(endAt.getTime())||endAt<startAt)return res.status(400).json({message:"Invalid report date range."});
+    const branchId=req.query.branchId?String(req.query.branchId):null;
+    const employeeId=req.query.employeeId?Number(req.query.employeeId):null;
+    const businessId=req.context.business_id;
+    const params=[businessId,startAt,endAt,branchId,employeeId];
+    const saleFilter="s.business_id=$1 AND s.created_at >= $2 AND s.created_at <= $3 AND ($4::bigint IS NULL OR s.branch_id=$4::bigint) AND ($5::integer IS NULL OR s.cashier_user_id=$5::integer)";
+    const itemSql=`SELECT si.*,s.status,s.subtotal AS sale_subtotal,s.discount AS sale_discount,s.total AS sale_total,s.created_at,
+        p.sku,pc.name AS category_name,b.name AS branch_name,u.display_name AS cashier_name
+      FROM sale_items si
+      JOIN sales s ON s.id=si.sale_id
+      LEFT JOIN products p ON p.id=si.product_id
+      LEFT JOIN product_categories pc ON pc.id=p.category_id
+      LEFT JOIN branches b ON b.id=s.branch_id
+      LEFT JOIN users u ON u.id=s.cashier_user_id
+      WHERE ${saleFilter}`;
+
+    const [sales,items,expenses,ingredients,recipes]=await Promise.all([
+      pool.query(`SELECT s.*,b.name AS branch_name,u.display_name AS cashier_name,c.name AS customer_name
+        FROM sales s JOIN branches b ON b.id=s.branch_id
+        LEFT JOIN users u ON u.id=s.cashier_user_id
+        LEFT JOIN customers c ON c.id=s.customer_id
+        WHERE ${saleFilter} ORDER BY s.created_at DESC`,params),
+      pool.query(itemSql,params),
+      pool.query(`SELECT amount FROM expenses WHERE business_id=$1 AND spent_at >= $2 AND spent_at <= $3 AND ($4::bigint IS NULL OR branch_id=$4::bigint)`,[businessId,startAt,endAt,branchId]),
+      pool.query("SELECT id,cost_per_unit FROM ingredients WHERE business_id=$1",[businessId]),
+      pool.query("SELECT product_id,ingredient_id,qty_required FROM product_ingredients WHERE business_id=$1",[businessId])
+    ]);
+
+    const costMap=new Map(ingredients.rows.map(i=>[String(i.id),Number(i.cost_per_unit)]));
+    const recipeCost=new Map();
+    for(const recipe of recipes.rows){
+      const key=String(recipe.product_id);
+      recipeCost.set(key,(recipeCost.get(key)||0)+Number(recipe.qty_required)*(costMap.get(String(recipe.ingredient_id))||0));
+    }
+
+    const summarize=(saleRows,itemRows)=>{
+      const completed=saleRows.filter(x=>x.status==="completed");
+      const refunded=saleRows.filter(x=>x.status==="voided"||x.status==="refunded");
+      const cogs=itemRows.filter(x=>x.status==="completed").reduce((sum,item)=>sum+(recipeCost.get(String(item.product_id))||0)*Number(item.qty),0);
+      const grossSales=completed.reduce((sum,x)=>sum+Number(x.subtotal),0);
+      const discounts=completed.reduce((sum,x)=>sum+Number(x.discount),0);
+      const netSales=completed.reduce((sum,x)=>sum+Number(x.total),0);
+      const refunds=refunded.reduce((sum,x)=>sum+Number(x.total),0);
+      return {grossSales,refunds,discounts,netSales,grossProfit:netSales-cogs,cogs,orders:completed.length};
+    };
+
+    const current=summarize(sales.rows,items.rows);
+    const duration=Math.max(1,endAt.getTime()-startAt.getTime());
+    const prevStart=new Date(startAt.getTime()-duration-1);
+    const prevEnd=new Date(startAt.getTime()-1);
+    const prevParams=[businessId,prevStart,prevEnd,branchId,employeeId];
+    const [prevSales,prevItems]=await Promise.all([
+      pool.query(`SELECT s.* FROM sales s WHERE ${saleFilter}`,prevParams),
+      pool.query(itemSql,prevParams)
+    ]);
+    const previous=summarize(prevSales.rows,prevItems.rows);
+    const compare=(cur,prev)=>({delta:cur-prev,pct:prev===0?(cur===0?0:100):((cur-prev)/Math.abs(prev))*100});
+    const comparisons={
+      grossSales:compare(current.grossSales,previous.grossSales),
+      refunds:compare(current.refunds,previous.refunds),
+      discounts:compare(current.discounts,previous.discounts),
+      netSales:compare(current.netSales,previous.netSales),
+      grossProfit:compare(current.grossProfit,previous.grossProfit)
+    };
+
+    const productMap=new Map();
+    const categoryMap=new Map();
+    const dayMap=new Map();
+    const paymentMap=new Map();
+    const employeeMap=new Map();
+    const dayKey=value=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Manila",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(value));
+
+    for(const sale of sales.rows){
+      const key=dayKey(sale.created_at);
+      const day=dayMap.get(key)||{date:key,grossSales:0,refunds:0,discounts:0,netSales:0,cogs:0,grossProfit:0,orders:0};
+      if(sale.status==="completed"){
+        day.grossSales+=Number(sale.subtotal);day.discounts+=Number(sale.discount);day.netSales+=Number(sale.total);day.orders++;
+        const pay=paymentMap.get(sale.payment_method)||{name:sale.payment_method,receipts:0,netSales:0};
+        pay.receipts++;pay.netSales+=Number(sale.total);paymentMap.set(sale.payment_method,pay);
+        const empKey=String(sale.cashier_user_id||"unknown");
+        const emp=employeeMap.get(empKey)||{id:sale.cashier_user_id,name:sale.cashier_name||"Unknown",receipts:0,netSales:0};
+        emp.receipts++;emp.netSales+=Number(sale.total);employeeMap.set(empKey,emp);
+      }else if(sale.status==="voided"||sale.status==="refunded") day.refunds+=Number(sale.total);
+      dayMap.set(key,day);
+    }
+
+    for(const item of items.rows){
+      if(item.status!=="completed")continue;
+      const gross=Number(item.line_total);
+      const saleSubtotal=Number(item.sale_subtotal)||0;
+      const discountShare=saleSubtotal>0?Number(item.sale_discount||0)*(gross/saleSubtotal):0;
+      const net=gross-discountShare;
+      const cogs=(recipeCost.get(String(item.product_id))||0)*Number(item.qty);
+      const profit=net-cogs;
+      const productKey=String(item.product_id||item.product_name);
+      const p=productMap.get(productKey)||{id:item.product_id,name:item.product_name,sku:item.sku||"",category:item.category_name||"Uncategorized",qty:0,grossSales:0,discounts:0,netSales:0,cogs:0,grossProfit:0,margin:0};
+      p.qty+=Number(item.qty);p.grossSales+=gross;p.discounts+=discountShare;p.netSales+=net;p.cogs+=cogs;p.grossProfit+=profit;p.margin=p.netSales?100*p.grossProfit/p.netSales:0;productMap.set(productKey,p);
+      const catKey=item.category_name||"Uncategorized";
+      const c=categoryMap.get(catKey)||{name:catKey,qty:0,grossSales:0,discounts:0,netSales:0,cogs:0,grossProfit:0,margin:0};
+      c.qty+=Number(item.qty);c.grossSales+=gross;c.discounts+=discountShare;c.netSales+=net;c.cogs+=cogs;c.grossProfit+=profit;c.margin=c.netSales?100*c.grossProfit/c.netSales:0;categoryMap.set(catKey,c);
+      const key=dayKey(item.created_at);
+      const day=dayMap.get(key)||{date:key,grossSales:0,refunds:0,discounts:0,netSales:0,cogs:0,grossProfit:0,orders:0};
+      day.cogs+=cogs;dayMap.set(key,day);
+    }
+    for(const day of dayMap.values())day.grossProfit=day.netSales-day.cogs;
+
+    const expenseTotal=expenses.rows.reduce((sum,e)=>sum+Number(e.amount),0);
+    res.json({
+      period,startAt,endAt,
+      sales:current.netSales,orders:current.orders,expenses:expenseTotal,estimatedCogs:current.cogs,
+      estimatedProfit:current.grossProfit-expenseTotal,
+      grossSales:current.grossSales,refunds:current.refunds,discounts:current.discounts,netSales:current.netSales,grossProfit:current.grossProfit,
+      cashSales:sales.rows.filter(x=>x.status==="completed"&&x.payment_method==="cash").reduce((sum,x)=>sum+Number(x.total),0),
+      gcashSales:sales.rows.filter(x=>x.status==="completed"&&x.payment_method==="gcash").reduce((sum,x)=>sum+Number(x.total),0),
+      comparisons,
+      breakdown:[...dayMap.values()].sort((a,b)=>a.date.localeCompare(b.date)),
+      products:[...productMap.values()].sort((a,b)=>b.netSales-a.netSales),
+      categories:[...categoryMap.values()].sort((a,b)=>b.netSales-a.netSales),
+      employees:[...employeeMap.values()].sort((a,b)=>b.netSales-a.netSales),
+      paymentTypes:[...paymentMap.values()].sort((a,b)=>b.netSales-a.netSales),
+      transactions:sales.rows
+    });
+  }catch(error){
+    console.error(error);
+    res.status(500).json({message:"Unable to build report."});
   }
-  const salesTotal=completed.reduce((sum,s)=>sum+Number(s.total),0);
-  const expenseTotal=expenses.rows.reduce((sum,e)=>sum+Number(e.amount),0);
-  res.json({
-    period,startAt,sales:salesTotal,orders:completed.length,expenses:expenseTotal,estimatedCogs,
-    estimatedProfit:salesTotal-estimatedCogs-expenseTotal,
-    cashSales:completed.filter(s=>s.payment_method==="cash").reduce((sum,s)=>sum+Number(s.total),0),
-    gcashSales:completed.filter(s=>s.payment_method==="gcash").reduce((sum,s)=>sum+Number(s.total),0),
-    products:[...productMap.values()].sort((a,b)=>b.revenue-a.revenue),
-    transactions:sales.rows
-  });
 });
 
 app.post("/api/sales/void", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
@@ -897,45 +1004,99 @@ app.post("/api/subscription/change", auth, requireContext, allow("owner","admin"
 });
 
 app.get("/api/landlord", auth, async(req,res)=>{
-  if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
-  const {rows}=await pool.query(`
-    SELECT b.*,
-      (SELECT count(*)::int FROM branches br WHERE br.business_id=b.id AND br.is_active=true) AS branches,
-      (SELECT count(*)::int FROM business_members bm WHERE bm.business_id=b.id AND bm.is_active=true) AS members,
-      COALESCE((SELECT sum(s.total) FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('month',now())),0) AS month_sales,
-      COALESCE((SELECT sum(s.total) FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('day',now())),0) AS today_sales
-    FROM businesses b ORDER BY b.created_at DESC
-  `);
-  const active=rows.filter(b=>b.subscription_status==="active"&&!b.is_suspended);
-  res.json({
-    summary:{
-      totalTenants:rows.length,
-      activeTenants:active.length,
-      trialTenants:rows.filter(b=>b.subscription_status==="trialing"&&!b.is_suspended).length,
-      needsAttention:rows.filter(b=>["past_due","suspended"].includes(b.subscription_status)||b.is_suspended).length,
-      monthlyRecurringRevenue:active.reduce((sum,b)=>sum+(PLAN_LIMITS[b.plan]?.price||0),0)
-    },
-    tenants:rows
-  });
+  try{
+    if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
+    const [tenantRows,auditRows,userStats]=await Promise.all([
+      pool.query(`
+        SELECT b.*,
+          (SELECT count(*)::int FROM branches br WHERE br.business_id=b.id AND br.is_active=true) AS branches,
+          (SELECT count(*)::int FROM business_members bm WHERE bm.business_id=b.id AND bm.is_active=true) AS members,
+          (SELECT u.email FROM business_members bm JOIN users u ON u.id=bm.user_id WHERE bm.business_id=b.id AND bm.role='owner' ORDER BY bm.id LIMIT 1) AS owner_email,
+          (SELECT u.display_name FROM business_members bm JOIN users u ON u.id=bm.user_id WHERE bm.business_id=b.id AND bm.role='owner' ORDER BY bm.id LIMIT 1) AS owner_name,
+          COALESCE((SELECT sum(s.total) FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('month',now())),0) AS month_sales,
+          COALESCE((SELECT sum(s.total) FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('day',now())),0) AS today_sales,
+          COALESCE((SELECT count(*)::int FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('month',now())),0) AS month_orders
+        FROM businesses b ORDER BY b.created_at DESC
+      `),
+      pool.query(`SELECT a.*,b.name AS business_name,u.display_name,u.email
+        FROM audit_logs a LEFT JOIN businesses b ON b.id=a.business_id LEFT JOIN users u ON u.id=a.user_id
+        ORDER BY a.created_at DESC LIMIT 250`),
+      pool.query(`SELECT count(*)::int AS total_users,
+        count(*) FILTER (WHERE platform_role='platform_admin')::int AS platform_admins
+        FROM users`)
+    ]);
+    const rows=tenantRows.rows;
+    const active=rows.filter(b=>b.subscription_status==="active"&&!b.is_suspended);
+    const trial=rows.filter(b=>b.subscription_status==="trialing"&&!b.is_suspended);
+    const planBreakdown={starter:0,pro:0,business:0};
+    for(const tenant of active)if(planBreakdown[tenant.plan]!==undefined)planBreakdown[tenant.plan]++;
+    res.json({
+      summary:{
+        totalTenants:rows.length,
+        activeTenants:active.length,
+        trialTenants:trial.length,
+        needsAttention:rows.filter(b=>["past_due","suspended","cancelled"].includes(b.subscription_status)||b.is_suspended).length,
+        monthlyRecurringRevenue:active.reduce((sum,b)=>sum+(PLAN_LIMITS[b.plan]?.price||0),0),
+        monthPlatformSales:rows.reduce((sum,b)=>sum+Number(b.month_sales||0),0)
+      },
+      planBreakdown,
+      security:{
+        betaGateEnabled:Boolean(process.env.BETA_ACCESS_CODE),
+        platformAdmins:Number(userStats.rows[0]?.platform_admins||0),
+        totalUsers:Number(userStats.rows[0]?.total_users||0),
+        database:"healthy",
+        sessionCookie:"httpOnly · sameSite=lax · secure in production"
+      },
+      tenants:rows,
+      audits:auditRows.rows
+    });
+  }catch(error){
+    console.error(error);
+    res.status(500).json({message:"Unable to load platform console."});
+  }
 });
 
 app.post("/api/landlord/action", auth, async(req,res)=>{
-  if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
-  const businessId=String(req.body.businessId||"");
-  const action=req.body.action;
-  const found=await pool.query("SELECT * FROM businesses WHERE id=$1",[businessId]);
-  if(!found.rowCount)return res.status(404).json({message:"Tenant not found."});
-  if(action==="extend_trial"){
-    await pool.query(`UPDATE businesses SET trial_ends_at=GREATEST(trial_ends_at,now())+interval '7 days',subscription_status='trialing',is_suspended=false,updated_at=now() WHERE id=$1`,[businessId]);
-  }else if(action==="suspend"){
-    await pool.query("UPDATE businesses SET is_suspended=true,subscription_status='suspended',updated_at=now() WHERE id=$1",[businessId]);
-  }else if(action==="resume"){
-    await pool.query(`UPDATE businesses SET is_suspended=false,subscription_status='trialing',trial_ends_at=GREATEST(trial_ends_at,now())+interval '7 days',updated_at=now() WHERE id=$1`,[businessId]);
-  }else if(action==="mark_active"){
-    await pool.query(`UPDATE businesses SET is_suspended=false,subscription_status='active',current_period_end=now()+interval '30 days',updated_at=now() WHERE id=$1`,[businessId]);
-  }else return res.status(400).json({message:"Invalid action."});
-  await audit(pool,businessId,req.user.id,"LANDLORD_"+String(action).toUpperCase(),"business",businessId,"Platform owner action");
-  res.json({ok:true});
+  try{
+    if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
+    const businessId=String(req.body.businessId||"");
+    const action=String(req.body.action||"");
+    const found=await pool.query("SELECT * FROM businesses WHERE id=$1",[businessId]);
+    if(!found.rowCount)return res.status(404).json({message:"Tenant not found."});
+    const tenant=found.rows[0];
+    if(action==="extend_trial"){
+      await pool.query(`UPDATE businesses SET trial_ends_at=GREATEST(trial_ends_at,now())+interval '7 days',subscription_status='trialing',is_suspended=false,updated_at=now() WHERE id=$1`,[businessId]);
+    }else if(action==="extend_trial_30"||action==="reset_trial"){
+      await pool.query(`UPDATE businesses SET trial_ends_at=now()+interval '30 days',subscription_status='trialing',is_suspended=false,current_period_end=NULL,updated_at=now() WHERE id=$1`,[businessId]);
+    }else if(action==="suspend"){
+      await pool.query("UPDATE businesses SET is_suspended=true,subscription_status='suspended',updated_at=now() WHERE id=$1",[businessId]);
+    }else if(action==="resume"){
+      const resumeStatus=tenant.current_period_end&&new Date(tenant.current_period_end).getTime()>Date.now()?"active":"trialing";
+      await pool.query(`UPDATE businesses SET is_suspended=false,subscription_status=$2,trial_ends_at=CASE WHEN $2='trialing' THEN GREATEST(trial_ends_at,now())+interval '7 days' ELSE trial_ends_at END,updated_at=now() WHERE id=$1`,[businessId,resumeStatus]);
+    }else if(action==="mark_active"){
+      await pool.query(`UPDATE businesses SET is_suspended=false,subscription_status='active',current_period_end=now()+interval '30 days',updated_at=now() WHERE id=$1`,[businessId]);
+    }else if(action==="mark_past_due"){
+      await pool.query("UPDATE businesses SET is_suspended=false,subscription_status='past_due',updated_at=now() WHERE id=$1",[businessId]);
+    }else if(action==="cancel"){
+      await pool.query("UPDATE businesses SET is_suspended=true,subscription_status='cancelled',updated_at=now() WHERE id=$1",[businessId]);
+    }else if(action==="change_plan"){
+      const plan=["starter","pro","business"].includes(req.body.plan)?req.body.plan:null;
+      if(!plan)return res.status(400).json({message:"Invalid plan."});
+      const [members,branches]=await Promise.all([
+        pool.query("SELECT count(*)::int AS count FROM business_members WHERE business_id=$1 AND is_active=true",[businessId]),
+        pool.query("SELECT count(*)::int AS count FROM branches WHERE business_id=$1 AND is_active=true",[businessId])
+      ]);
+      if(members.rows[0].count>PLAN_LIMITS[plan].staff)return res.status(400).json({message:"Tenant has more active staff than the selected plan allows."});
+      if(branches.rows[0].count>PLAN_LIMITS[plan].branches)return res.status(400).json({message:"Tenant has more active branches than the selected plan allows."});
+      await pool.query("UPDATE businesses SET plan=$2,updated_at=now() WHERE id=$1",[businessId,plan]);
+    }else return res.status(400).json({message:"Invalid action."});
+    await audit(pool,businessId,req.user.id,"LANDLORD_"+action.toUpperCase(),"business",businessId,req.body.plan?String(req.body.plan):"Platform owner action");
+    const updated=await pool.query("SELECT id,name,plan,subscription_status,trial_ends_at,current_period_end,is_suspended FROM businesses WHERE id=$1",[businessId]);
+    res.json({ok:true,tenant:updated.rows[0]});
+  }catch(error){
+    console.error(error);
+    res.status(400).json({message:error.message||"Unable to update tenant."});
+  }
 });
 
 app.use(express.static(path.join(rootDir, "dist")));
