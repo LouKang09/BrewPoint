@@ -19,10 +19,16 @@ const plans = {
 const money = value => "₱" + Number(value || 0).toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2});
 const dateTime = value => value ? new Intl.DateTimeFormat("en-PH",{dateStyle:"medium",timeStyle:"short",timeZone:"Asia/Manila"}).format(new Date(value)) : "—";
 
+const TENANT_TAB_TOKEN="brewpoint-tab-session";
+const ADMIN_TAB_TOKEN="brewpoint-admin-tab-session";
+
 async function api(path, options={}) {
+  const adminRequest=path.startsWith("/admin/")||path.startsWith("/landlord");
+  const token=sessionStorage.getItem(adminRequest?ADMIN_TAB_TOKEN:TENANT_TAB_TOKEN);
+  const headers={"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{}),...(options.headers||{})};
   const response = await fetch("/api"+path,{
     credentials:"include",
-    headers:{"Content-Type":"application/json",...(options.headers||{})},
+    headers,
     ...options,
     body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
   });
@@ -59,8 +65,8 @@ function useTheme(){
 }
 
 function ThemeControl({theme,setTheme,compact=false}){
-  const options=[["light",Sun,"Light"],["dark",Moon,"Dark"],["auto",Monitor,"Auto"]];
-  return <div className={"theme-control "+(compact?"compact":"")}>{options.map(([id,Icon,label])=><button key={id} title={label} className={theme===id?"active":""} onClick={()=>setTheme(id)}><Icon size={14}/>{!compact&&<span>{label}</span>}</button>)}</div>;
+  const options=[["light",Sun,"Light"],["dark",Moon,"Dark"],["auto",Monitor,"System"]];
+  return <div className={"theme-control "+(compact?"compact":"")}>{options.map(([id,Icon,label])=><button key={id} title={id==="auto"?"System — follows your device light/dark setting":label} className={theme===id?"active":""} onClick={()=>setTheme(id)}><Icon size={14}/>{!compact&&<span>{label}</span>}</button>)}</div>;
 }
 
 function GuideTour({role,onSectionChange,onClose,admin=false}){
@@ -174,7 +180,7 @@ function SupportChat(){
 function Landing() {
   const {theme,setTheme}=useTheme();
   return <div className="marketing">
-    <header className="nav"><Brand compact/><nav><a href="#features">Features</a><a href="#pricing">Pricing</a><ThemeControl theme={theme} setTheme={setTheme} compact/><Link to="/login">Sign in</Link><Link className="btn primary small" to="/signup">Start 30 days free</Link></nav></header>
+    <header className="nav"><Brand compact/><nav><a href="#features">Features</a><a href="#pricing">Pricing</a><ThemeControl theme={theme} setTheme={setTheme} compact/><Link to="/login">Staff sign in</Link><Link to="/owner/login">Owner login</Link><Link className="btn primary small" to="/signup">Start 30 days free</Link></nav></header>
     <section className="hero">
       <div className="hero-copy">
         <span className="pill">30-day free trial · built for coffee businesses</span>
@@ -204,28 +210,29 @@ function Landing() {
   </div>;
 }
 
-function AuthPage({mode,destination="/app",admin=false}) {
+function AuthPage({mode,destination="/app",admin=false,owner=false}) {
   const nav=useNavigate();
-  const [form,setForm]=useState({displayName:"",email:"",password:"",accessCode:""});
+  const [form,setForm]=useState({displayName:"",email:"",password:""});
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(false);
   const submit=async e=>{
     e.preventDefault();setError("");setLoading(true);
     try{
-      await api(mode==="signup"?"/auth/register":admin?"/admin/auth/login":"/auth/login",{method:"POST",body:form});
+      const endpoint=mode==="signup"?"/auth/register":admin?"/admin/auth/login":owner?"/owner/auth/login":"/auth/login";
+      const result=await api(endpoint,{method:"POST",body:form});
+      if(result.token)sessionStorage.setItem(admin?ADMIN_TAB_TOKEN:TENANT_TAB_TOKEN,result.token);
       nav(destination);
     }catch(err){setError(err.message);}finally{setLoading(false);}
   };
   return <div className="auth-page">
-    <aside className="auth-side"><img className="auth-official-logo" src={LOGO} alt="BrewPoint"/><h1>{mode==="signup"?"Build a calmer back office for your café.":"Welcome back to BrewPoint."}</h1><p>Sales, recipes, inventory, expenses, customers, staff, branches, and reporting in one workspace.</p><div className="auth-benefits"><span><Check/>30-day trial</span><span><Check/>Private tenant workspace</span><span><Check/>No real payment in testing mode</span></div></aside>
-    <main className="auth-main"><form className="auth-card" onSubmit={submit}><span className="pill">{mode==="signup"?"START FREE":admin?"PLATFORM ADMIN":"SIGN IN"}</span><h2>{mode==="signup"?"Create your BrewPoint account":admin?"Open platform administration":"Open your workspace"}</h2>
+    <aside className="auth-side"><Link to="/" className="auth-logo-link"><img className="auth-official-logo" src={LOGO} alt="BrewPoint"/></Link><h1>{mode==="signup"?"Build a calmer back office for your café.":owner?"Owner access to BrewPoint.":admin?"BrewPoint platform administration.":"Welcome back to BrewPoint."}</h1><p>Sales, recipes, inventory, expenses, customers, staff, branches, and reporting in one workspace.</p><div className="auth-benefits"><span><Check/>30-day trial</span><span><Check/>Private tenant workspace</span><span><Check/>No real payment in testing mode</span></div></aside>
+    <main className="auth-main"><form className="auth-card" onSubmit={submit}><span className="pill">{mode==="signup"?"START FREE":admin?"PLATFORM ADMIN":owner?"OWNER LOGIN":"SIGN IN"}</span><h2>{mode==="signup"?"Create your BrewPoint account":admin?"Open platform administration":owner?"Open owner workspace":"Open your workspace"}</h2>
       {mode==="signup"&&<label>Full name<input value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Your name" required/></label>}
-      {mode==="signup"&&<label>Beta access code<input value={form.accessCode} onChange={e=>setForm({...form,accessCode:e.target.value})} placeholder="Private test access code" required/></label>}
       <label>Email<input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="you@coffee.com" required/></label>
       <label>Password<input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="At least 8 characters" minLength="8" required/></label>
       {error&&<div className="form-error">{error}</div>}
       <button className="btn primary wide" disabled={loading}>{loading?"Please wait…":mode==="signup"?"Create account":"Sign in"}</button>
-      <p className="auth-switch">{mode==="signup"?<>Already have an account? <Link to="/login">Sign in</Link></>:<>New to BrewPoint? <Link to="/signup">Start free</Link></>}</p>
+      <p className="auth-switch">{mode==="signup"?<>Already have an account? <Link to="/login">Sign in</Link></>:admin?<>Business owner? <Link to="/owner/login">Owner login</Link></>:owner?<>Staff account? <Link to="/login">Staff sign in</Link></>:<>New to BrewPoint? <Link to="/signup">Start free</Link> · <Link to="/owner/login">Owner login</Link></>}</p>
     </form></main>
   </div>;
 }
@@ -275,7 +282,7 @@ function AppShell() {
     }finally{setLoading(false);}
   };
   useEffect(()=>{load();},[]);
-  const logout=async()=>{await api("/auth/logout",{method:"POST"});nav("/login");};
+  const logout=async()=>{try{await api("/auth/logout",{method:"POST"});}finally{sessionStorage.removeItem(TENANT_TAB_TOKEN);nav("/login");}};
 
   if(loading)return <Loading/>;
   if(!me)return <Navigate to="/login"/>;
@@ -297,7 +304,7 @@ function AppShell() {
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <button className="side-brand" onClick={()=>setSection("dashboard")}><img src={ICON}/><span><b>BrewPoint</b><small>COFFEE POS</small></span></button>
+      <button className="side-brand" onClick={()=>nav("/")} title="Back to BrewPoint website"><img src={ICON}/><span><b>BrewPoint</b><small>COFFEE POS</small></span></button>
       <div className="tenant"><small>WORKSPACE</small><b><Store size={15}/>{business.name}</b><span>{business.assignedBranchId?"Assigned branch":"Workspace"} · {plans[business.plan]?.name}</span></div>
       <nav>{visibleSections.map(([id,label,Icon])=><button data-guide={"nav-"+id} key={id} className={section===id?"active":""} onClick={()=>setSection(id)}><Icon size={17}/>{label}</button>)}</nav>
       <div className="side-bottom">
@@ -318,7 +325,7 @@ function AppShell() {
         {section==="expenses"&&<Expenses ws={workspace} reload={load} notify={notify}/>}
         {section==="reports"&&<Reports ws={workspace} reload={load} notify={notify}/>}
         {section==="team"&&<Team ws={workspace} reload={load} notify={notify}/>}
-        {section==="preview"&&<PreviewLab/>}
+        {section==="preview"&&<PreviewLab ws={workspace}/>} 
         {section==="billing"&&<Billing ws={workspace} reload={load} notify={notify}/>}
       </div>
       <Toast toast={toast} onClear={()=>setToast(null)}/>
@@ -999,7 +1006,7 @@ function OwnerConsole() {
   const load=async()=>{try{setError("");setData(await api("/landlord"));}catch(err){if(err.message.toLowerCase().includes("sign in")||err.message.toLowerCase().includes("session"))nav("/admin/login");else setError(err.message);}};
   useEffect(()=>{load();},[]);
   const act=async(businessId,action,extra={})=>{try{await api("/landlord/action",{method:"POST",body:{businessId:String(businessId),action,...extra}});setToast({message:"Tenant updated"});await load();}catch(err){setToast({message:err.message,type:"error"});}};
-  const logout=async()=>{await api("/admin/auth/logout",{method:"POST"});nav("/admin/login");};
+  const logout=async()=>{try{await api("/admin/auth/logout",{method:"POST"});}finally{sessionStorage.removeItem(ADMIN_TAB_TOKEN);nav("/admin/login");}};
   const daysLeft=t=>Math.max(0,Math.ceil((new Date(t.trial_ends_at).getTime()-Date.now())/86400000));
   const tenantMatches=t=>[t.name,t.owner_name,t.owner_email,t.plan,t.subscription_status].join(" ").toLowerCase().includes(search.toLowerCase());
   const tenants=(data?.tenants||[]).filter(tenantMatches);
@@ -1038,7 +1045,7 @@ export default function App() {
     <Route path="/login" element={<AuthPage mode="login"/>}/>
     <Route path="/signup" element={<AuthPage mode="signup"/>}/>
     <Route path="/app" element={<AppShell/>}/>
-    <Route path="/admin/login" element={<AuthPage mode="login" destination="/admin" admin/>}/><Route path="/admin" element={<OwnerConsole/>}/><Route path="/owner" element={<Navigate to="/admin"/>}/>
+    <Route path="/owner/login" element={<AuthPage mode="login" destination="/app" owner/>}/><Route path="/owner" element={<Navigate to="/owner/login"/>}/><Route path="/admin/login" element={<AuthPage mode="login" destination="/admin" admin/>}/><Route path="/admin" element={<OwnerConsole/>}/>
     <Route path="*" element={<Navigate to="/"/>}/>
   </Routes>;
 }
