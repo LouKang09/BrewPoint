@@ -285,6 +285,34 @@ function setSession(res, user) {
   });
 }
 
+function setAdminSession(res, user) {
+  res.cookie("bp_admin_session", signSession(user), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+}
+
+async function adminAuth(req, res, next) {
+  try {
+    const token = req.cookies.bp_admin_session;
+    if (!token) return res.status(401).json({ message: "Please sign in to BrewPoint Admin." });
+    const payload = jwt.verify(token, JWT_SECRET);
+    const { rows } = await pool.query(
+      "SELECT id,email,display_name,platform_role FROM users WHERE id=$1",
+      [payload.id]
+    );
+    if (!rows[0] || rows[0].platform_role !== "platform_admin") {
+      return res.status(403).json({ message: "Platform owner access required." });
+    }
+    req.user = rows[0];
+    next();
+  } catch {
+    res.status(401).json({ message: "Your admin session has expired." });
+  }
+}
+
 async function auth(req, res, next) {
   try {
     const token = req.cookies.bp_session;
@@ -435,6 +463,27 @@ app.post("/api/auth/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/admin/auth/login", async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
+  const { rows } = await pool.query("SELECT * FROM users WHERE email=$1", [email]);
+  const user = rows[0];
+  if (!user || user.platform_role !== "platform_admin" || !(await bcrypt.compare(password, user.password_hash))) {
+    return res.status(401).json({ message: "Incorrect platform-admin email or password." });
+  }
+  setAdminSession(res, user);
+  res.json({ user: { id:user.id,email:user.email,displayName:user.display_name,platformRole:user.platform_role } });
+});
+
+app.post("/api/admin/auth/logout", (_req, res) => {
+  res.clearCookie("bp_admin_session");
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/me", adminAuth, async (req, res) => {
+  res.json({ user: { id:req.user.id,email:req.user.email,displayName:req.user.display_name,platformRole:req.user.platform_role } });
+});
+
 app.get("/api/me", auth, async (req, res) => {
   const context = await getContext(req.user.id);
   res.json({
@@ -447,7 +496,7 @@ app.post("/api/business/setup", auth, async (req, res) => {
   const existing = await getContext(req.user.id);
   if (existing) return res.status(409).json({ message: "This account already belongs to a BrewPoint business." });
   const name = String(req.body.businessName || "").trim();
-  const plan = ["starter", "pro", "business"].includes(req.body.plan) ? req.body.plan : "pro";
+  const plan = "starter";
   if (name.length < 2) return res.status(400).json({ message: "Enter your business name." });
   const client = await pool.connect();
   try {
@@ -534,7 +583,7 @@ app.post("/api/business/setup", auth, async (req, res) => {
       "INSERT INTO promos(business_id,name,promo_type,value,rules) VALUES($1,'143 Promo','set_price',143,$2::jsonb)",
       [business.id, JSON.stringify([{categoryId:String(categoryIds["Coffee"]),qty:1},{categoryId:String(categoryIds["Food"]),qty:1}])]
     );
-    await audit(client, business.id, req.user.id, "BUSINESS_CREATED", "business", business.id, "30-day " + plan + " trial started");
+    await audit(client, business.id, req.user.id, "BUSINESS_CREATED", "business", business.id, "30-day Starter trial started");
     await client.query("COMMIT");
     res.json({ businessId: String(business.id), branchId: String(branchRows[0].id) });
   } catch (error) {
@@ -1249,6 +1298,7 @@ app.post("/api/sales/void", auth, requireContext, allow("owner","admin","manager
 app.post("/api/subscription/change", auth, requireContext, allow("owner","admin"), async(req,res)=>{
   const plan=["starter","pro","business"].includes(req.body.plan)?req.body.plan:null;
   if(!plan)return res.status(400).json({message:"Invalid plan."});
+  if(req.context.subscription_status==="trialing" && plan!=="starter")return res.status(400).json({message:"The 30-day trial is limited to Starter. Activate Starter first, then upgrade after the trial subscription is active."});
   const currentMembers=await pool.query("SELECT count(*)::int AS count FROM business_members WHERE business_id=$1 AND is_active=true",[req.context.business_id]);
   const currentBranches=await pool.query("SELECT count(*)::int AS count FROM branches WHERE business_id=$1 AND is_active=true",[req.context.business_id]);
   if(currentMembers.rows[0].count>PLAN_LIMITS[plan].staff)return res.status(400).json({message:"Disable staff accounts before downgrading to this plan."});
@@ -1307,7 +1357,7 @@ app.post("/api/support/tickets/:token/messages",async(req,res)=>{
   res.json({ok:true});
 });
 
-app.get("/api/admin/support",auth,async(req,res)=>{
+app.get("/api/admin/support",adminAuth,async(req,res)=>{
   if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
   const {rows}=await pool.query(`SELECT t.*,
     (SELECT message FROM support_messages sm WHERE sm.ticket_id=t.id ORDER BY sm.created_at DESC LIMIT 1) AS last_message,
@@ -1317,7 +1367,7 @@ app.get("/api/admin/support",auth,async(req,res)=>{
   res.json({tickets:rows});
 });
 
-app.get("/api/admin/support/:id",auth,async(req,res)=>{
+app.get("/api/admin/support/:id",adminAuth,async(req,res)=>{
   if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
   const ticket=await pool.query("SELECT * FROM support_tickets WHERE id=$1",[String(req.params.id||"")]);
   if(!ticket.rowCount)return res.status(404).json({message:"Ticket not found."});
@@ -1325,7 +1375,7 @@ app.get("/api/admin/support/:id",auth,async(req,res)=>{
   res.json({ticket:ticket.rows[0],messages:messages.rows});
 });
 
-app.post("/api/admin/support/:id/reply",auth,async(req,res)=>{
+app.post("/api/admin/support/:id/reply",adminAuth,async(req,res)=>{
   if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
   const ticketId=String(req.params.id||"");
   const message=String(req.body.message||"").trim();
@@ -1337,7 +1387,7 @@ app.post("/api/admin/support/:id/reply",auth,async(req,res)=>{
   res.json({ok:true});
 });
 
-app.post("/api/admin/support/:id/status",auth,async(req,res)=>{
+app.post("/api/admin/support/:id/status",adminAuth,async(req,res)=>{
   if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
   const status=["open","answered","closed"].includes(req.body.status)?req.body.status:null;
   if(!status)return res.status(400).json({message:"Invalid ticket status."});
@@ -1346,7 +1396,7 @@ app.post("/api/admin/support/:id/status",auth,async(req,res)=>{
   res.json({ok:true});
 });
 
-app.get("/api/landlord", auth, async(req,res)=>{
+app.get("/api/landlord", adminAuth, async(req,res)=>{
   try{
     if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
     const [tenantRows,auditRows,userStats]=await Promise.all([
@@ -1399,7 +1449,7 @@ app.get("/api/landlord", auth, async(req,res)=>{
   }
 });
 
-app.post("/api/landlord/action", auth, async(req,res)=>{
+app.post("/api/landlord/action", adminAuth, async(req,res)=>{
   try{
     if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
     const businessId=String(req.body.businessId||"");
@@ -1408,14 +1458,14 @@ app.post("/api/landlord/action", auth, async(req,res)=>{
     if(!found.rowCount)return res.status(404).json({message:"Tenant not found."});
     const tenant=found.rows[0];
     if(action==="extend_trial"){
-      await pool.query(`UPDATE businesses SET trial_ends_at=GREATEST(trial_ends_at,now())+interval '7 days',subscription_status='trialing',is_suspended=false,updated_at=now() WHERE id=$1`,[businessId]);
+      await pool.query(`UPDATE businesses SET plan='starter',trial_ends_at=GREATEST(trial_ends_at,now())+interval '7 days',subscription_status='trialing',is_suspended=false,updated_at=now() WHERE id=$1`,[businessId]);
     }else if(action==="extend_trial_30"||action==="reset_trial"){
-      await pool.query(`UPDATE businesses SET trial_ends_at=now()+interval '30 days',subscription_status='trialing',is_suspended=false,current_period_end=NULL,updated_at=now() WHERE id=$1`,[businessId]);
+      await pool.query(`UPDATE businesses SET plan='starter',trial_ends_at=now()+interval '30 days',subscription_status='trialing',is_suspended=false,current_period_end=NULL,updated_at=now() WHERE id=$1`,[businessId]);
     }else if(action==="suspend"){
       await pool.query("UPDATE businesses SET is_suspended=true,subscription_status='suspended',updated_at=now() WHERE id=$1",[businessId]);
     }else if(action==="resume"){
       const resumeStatus=tenant.current_period_end&&new Date(tenant.current_period_end).getTime()>Date.now()?"active":"trialing";
-      await pool.query(`UPDATE businesses SET is_suspended=false,subscription_status=$2,trial_ends_at=CASE WHEN $2='trialing' THEN GREATEST(trial_ends_at,now())+interval '7 days' ELSE trial_ends_at END,updated_at=now() WHERE id=$1`,[businessId,resumeStatus]);
+      await pool.query(`UPDATE businesses SET plan=CASE WHEN $2='trialing' THEN 'starter' ELSE plan END,is_suspended=false,subscription_status=$2,trial_ends_at=CASE WHEN $2='trialing' THEN GREATEST(trial_ends_at,now())+interval '7 days' ELSE trial_ends_at END,updated_at=now() WHERE id=$1`,[businessId,resumeStatus]);
     }else if(action==="mark_active"){
       await pool.query(`UPDATE businesses SET is_suspended=false,subscription_status='active',current_period_end=now()+interval '30 days',updated_at=now() WHERE id=$1`,[businessId]);
     }else if(action==="mark_past_due"){
