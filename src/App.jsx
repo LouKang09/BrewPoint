@@ -524,8 +524,20 @@ function CustomersPromos({ws,reload,notify}) {
   const [customer,setCustomer]=useState(blankCustomer);
   const [customerHistory,setCustomerHistory]=useState(null);
   const [historyLoading,setHistoryLoading]=useState(false);
+
+  const emptyPromo={name:"",promoType:"set_price",value:"",isActive:true,rules:[]};
   const [editingPromo,setEditingPromo]=useState(null);
-  const [promo,setPromo]=useState({name:"",promoType:"set_price",value:"",isActive:true});
+  const [promo,setPromo]=useState(emptyPromo);
+
+  const normalizedRules=p=>{
+    if(Array.isArray(p?.rules)&&p.rules.length)return p.rules.map(r=>({categoryId:String(r.categoryId),qty:Number(r.qty||1)}));
+    if(String(p?.name||"").toLowerCase().includes("143")){
+      const coffee=ws.categories.find(c=>String(c.name).toLowerCase()==="coffee")||ws.categories.find(c=>String(c.name).toLowerCase().includes("coffee"));
+      const food=ws.categories.find(c=>String(c.name).toLowerCase()==="food")||ws.categories.find(c=>String(c.name).toLowerCase().includes("food"));
+      if(coffee&&food)return [{categoryId:String(coffee.id),qty:1},{categoryId:String(food.id),qty:1}];
+    }
+    return [];
+  };
 
   const resetCustomer=()=>{setEditingCustomer(null);setCustomer(blankCustomer);};
   const editCustomer=c=>{setEditingCustomer(c);setCustomer({name:c.name,phone:c.phone||"",email:c.email||"",notes:c.notes||""});};
@@ -533,13 +545,24 @@ function CustomersPromos({ws,reload,notify}) {
   const saveCustomer=async()=>{try{await api("/customers",{method:"POST",body:{id:editingCustomer?.id,...customer}});notify(editingCustomer?"Customer updated":"Customer saved");resetCustomer();await reload();if(customerHistory?.customer?.id===editingCustomer?.id)setCustomerHistory(null);}catch(err){notify(err.message,"error");}};
   const deleteCustomer=async c=>{if(!window.confirm("Delete customer '"+c.name+"'? Historical receipts will remain, but the customer link will be removed."))return;try{await api("/customers/"+c.id,{method:"DELETE"});notify("Customer deleted");if(editingCustomer?.id===c.id)resetCustomer();if(customerHistory?.customer?.id===c.id)setCustomerHistory(null);await reload();}catch(err){notify(err.message,"error");}};
 
-  const resetPromo=()=>{setEditingPromo(null);setPromo({name:"",promoType:"set_price",value:"",isActive:true});};
-  const editPromo=p=>{setEditingPromo(p);setPromo({name:p.name,promoType:p.promo_type,value:String(p.value),isActive:Boolean(p.is_active)});};
-  const savePromo=async()=>{try{await api("/promos",{method:"POST",body:{id:editingPromo?.id,...promo,value:Number(promo.value)}});notify(editingPromo?"Promo updated":"Promo created");resetPromo();await reload();}catch(err){notify(err.message,"error");}};
+  const resetPromo=()=>{setEditingPromo(null);setPromo(emptyPromo);};
+  const editPromo=p=>{setEditingPromo(p);setPromo({name:p.name,promoType:p.promo_type,value:String(p.value),isActive:Boolean(p.is_active),rules:normalizedRules(p)});};
+  const addPromoRule=()=>setPromo(cur=>({...cur,rules:[...cur.rules,{categoryId:String(ws.categories.find(c=>String(c.name).toLowerCase()!=="promos")?.id||""),qty:1}]}));
+  const updatePromoRule=(index,patch)=>setPromo(cur=>({...cur,rules:cur.rules.map((r,i)=>i===index?{...r,...patch}:r)}));
+  const removePromoRule=index=>setPromo(cur=>({...cur,rules:cur.rules.filter((_,i)=>i!==index)}));
+  const savePromo=async()=>{
+    if(!promo.rules.length){notify("Add at least one promo requirement, such as 1× Coffee + 1× Food.","error");return;}
+    try{
+      await api("/promos",{method:"POST",body:{id:editingPromo?.id,...promo,value:Number(promo.value),rules:promo.rules.map(r=>({categoryId:r.categoryId,qty:Number(r.qty)}))}});
+      notify(editingPromo?"Promo updated":"Promo created");resetPromo();await reload();
+    }catch(err){notify(err.message,"error");}
+  };
   const deletePromo=async p=>{if(!window.confirm("Delete promo '"+p.name+"'? Existing transaction history will remain unchanged."))return;try{await api("/promos/"+p.id,{method:"DELETE"});notify("Promo deleted");if(editingPromo?.id===p.id)resetPromo();await reload();}catch(err){notify(err.message,"error");}};
 
+  const usableCategories=ws.categories.filter(c=>String(c.name).toLowerCase()!=="promos");
+
   return <div className="stack">
-    <section className="section-bar"><div><h2>Customers & promos</h2><p>Manage repeat customers, their purchase history, and checkout pricing rules.</p></div></section>
+    <section className="section-bar"><div><h2>Customers & promos</h2><p>Manage repeat customers, purchase history, and promo bundles that appear directly inside the POS Promos category.</p></div></section>
 
     {customerHistory&&<Panel title={customerHistory.customer.name+" · purchase history"} sub="Completed receipts and lifetime value">
       <div className="customer-history-head">
@@ -558,9 +581,23 @@ function CustomersPromos({ws,reload,notify}) {
         <div className="form-stack inset"><h4 className="inline-form-title">{editingCustomer?"Edit "+editingCustomer.name:"New customer"}</h4><label>Name<input value={customer.name} onChange={e=>setCustomer({...customer,name:e.target.value})}/></label><label>Phone<input value={customer.phone} onChange={e=>setCustomer({...customer,phone:e.target.value})}/></label><label>Email<input type="email" value={customer.email} onChange={e=>setCustomer({...customer,email:e.target.value})}/></label><label>Notes<input value={customer.notes} onChange={e=>setCustomer({...customer,notes:e.target.value})} placeholder="Preferences, usual order, reminders…"/></label><div className="form-actions">{editingCustomer&&<button className="btn secondary" onClick={resetCustomer}>Cancel</button>}<button className="btn primary" onClick={saveCustomer}>{editingCustomer?"Save customer":"Add customer"}</button></div></div>
       </Panel>
 
-      <Panel title="Promos" sub="Create, edit, enable/disable, or delete promos">
-        <div className="list promo-list">{ws.promos.map(p=><div key={p.id}><span><b>{p.name}</b><small>{p.promo_type.replaceAll("_"," ")} · {p.is_active?"Active":"Inactive"}</small></span><span className="row-actions"><strong>{p.promo_type==="percentage"?p.value+"%":money(p.value)}</strong><button className="btn secondary tiny" onClick={()=>editPromo(p)}>Edit</button><button className="btn danger tiny" onClick={()=>deletePromo(p)}>Delete</button></span></div>)}{!ws.promos.length&&<Empty Icon={Tags} text="No promos yet."/>}</div>
-        <div className="form-stack inset"><h4 className="inline-form-title">{editingPromo?"Edit "+editingPromo.name:"New promo"}</h4><label>Promo name<input value={promo.name} onChange={e=>setPromo({...promo,name:e.target.value})}/></label><label>Type<select value={promo.promoType} onChange={e=>setPromo({...promo,promoType:e.target.value})}><option value="set_price">Set final order price</option><option value="fixed_discount">Fixed discount</option><option value="percentage">Percentage discount</option></select></label><label>Value<input type="number" value={promo.value} onChange={e=>setPromo({...promo,value:e.target.value})}/></label><label className="checkbox-row"><input type="checkbox" checked={promo.isActive} onChange={e=>setPromo({...promo,isActive:e.target.checked})}/><span>Active and available at checkout</span></label><div className="form-actions">{editingPromo&&<button className="btn secondary" onClick={resetPromo}>Cancel</button>}<button className="btn primary" onClick={savePromo}>{editingPromo?"Save promo":"Create promo"}</button></div></div>
+      <Panel title="Promos" sub="Build category-based bundles used from the POS Promos tab">
+        <div className="list promo-list">{ws.promos.map(p=>{const rules=normalizedRules(p);return <div key={p.id}><span><b>{p.name}</b><small>{p.promo_type.replaceAll("_"," ")} · {p.is_active?"Active":"Inactive"} · {rules.length?rules.map(r=>{const c=ws.categories.find(x=>String(x.id)===String(r.categoryId));return r.qty+"× "+(c?.name||"Category")}).join(" + "):"No requirements"}</small></span><span className="row-actions"><strong>{p.promo_type==="percentage"?p.value+"%":money(p.value)}</strong><button className="btn secondary tiny" onClick={()=>editPromo(p)}>Edit</button><button className="btn danger tiny" onClick={()=>deletePromo(p)}>Delete</button></span></div>})}{!ws.promos.length&&<Empty Icon={Tags} text="No promos yet."/>}</div>
+
+        <div className="form-stack inset">
+          <h4 className="inline-form-title">{editingPromo?"Edit "+editingPromo.name:"New promo"}</h4>
+          <label>Promo name<input value={promo.name} onChange={e=>setPromo({...promo,name:e.target.value})}/></label>
+          <div className="form-grid promo-basic-grid"><label>Type<select value={promo.promoType} onChange={e=>setPromo({...promo,promoType:e.target.value})}><option value="set_price">Set promo bundle price</option><option value="fixed_discount">Fixed discount from selected bundle</option><option value="percentage">Percentage discount on selected bundle</option></select></label><label>{promo.promoType==="set_price"?"Promo bundle price":"Value"}<input type="number" value={promo.value} onChange={e=>setPromo({...promo,value:e.target.value})}/></label></div>
+
+          <div className="promo-rule-editor">
+            <div className="promo-rule-head"><div><b>Promo requirements</b><small>Example: 1× Coffee + 1× Food. POS users can only choose products from these categories.</small></div><button className="btn secondary small" onClick={addPromoRule}><Plus/>Add requirement</button></div>
+            {promo.rules.map((r,index)=><div className="promo-rule-row" key={index}><select value={r.categoryId} onChange={e=>updatePromoRule(index,{categoryId:e.target.value})}>{usableCategories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><input type="number" min="1" step="1" value={r.qty} onChange={e=>updatePromoRule(index,{qty:Math.max(1,Number(e.target.value||1))})}/><span>item(s)</span><button className="icon-btn danger-icon" onClick={()=>removePromoRule(index)}><Trash2 size={14}/></button></div>)}
+            {!promo.rules.length&&<div className="promo-rule-empty">Add the product categories required by this promo before saving it.</div>}
+          </div>
+
+          <label className="checkbox-row"><input type="checkbox" checked={promo.isActive} onChange={e=>setPromo({...promo,isActive:e.target.checked})}/><span>Active and available in the POS Promos category</span></label>
+          <div className="form-actions">{editingPromo&&<button className="btn secondary" onClick={resetPromo}>Cancel</button>}<button className="btn primary" onClick={savePromo}>{editingPromo?"Save promo":"Create promo"}</button></div>
+        </div>
       </Panel>
     </div>
   </div>;
