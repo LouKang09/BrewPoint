@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+coverage/
+.vite/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Railway / local tooling
+.railway/
+.vercel/
+.netlify/
+.floot/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs / temp / database dumps
+logs/
+*.log
+tmp/
+temp/
+*.sql
+*.dump
+*.bak
+
+# OS / misc
+*.swp
+*.swo
