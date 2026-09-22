@@ -180,11 +180,13 @@ const sections = [
 
 function AppShell() {
   const nav=useNavigate();
+  const {theme,setTheme}=useTheme();
   const [me,setMe]=useState(null);
   const [workspace,setWorkspace]=useState(null);
   const [section,setSection]=useState("dashboard");
   const [toast,setToast]=useState(null);
   const [loading,setLoading]=useState(true);
+  const [guideOpen,setGuideOpen]=useState(false);
 
   const notify=(message,type="")=>setToast({message,type});
   const load=async()=>{
@@ -220,12 +222,18 @@ function AppShell() {
   const visibleSections=sections.filter(([id])=>(allowedByRole[role]||["dashboard","pos"]).includes(id));
   const active=visibleSections.find(s=>s[0]===section)||visibleSections[0];
   if(!visibleSections.some(([id])=>id===section))setTimeout(()=>setSection("dashboard"),0);
+
   return <div className="app-shell">
     <aside className="sidebar">
       <button className="side-brand" onClick={()=>setSection("dashboard")}><img src={ICON}/><span><b>BrewPoint</b><small>COFFEE POS</small></span></button>
-      <div className="tenant"><small>WORKSPACE</small><b><Store size={15}/>{business.name}</b><span>{workspace.branches?.[0]?.name||"Main Branch"}</span></div>
+      <div className="tenant"><small>WORKSPACE</small><b><Store size={15}/>{business.name}</b><span>{business.assignedBranchId?"Assigned branch":"Workspace"} · {plans[business.plan]?.name}</span></div>
       <nav>{visibleSections.map(([id,label,Icon])=><button key={id} className={section===id?"active":""} onClick={()=>setSection(id)}><Icon size={17}/>{label}</button>)}</nav>
-      <div className="side-bottom"><div className="user-mini"><span>{me.user.displayName.slice(0,2).toUpperCase()}</span><div><b>{me.user.displayName}</b><small>{business.memberRole} · {plans[business.plan]?.name}</small></div></div><button className="logout" onClick={logout}><LogOut size={14}/>Sign out</button></div>
+      <div className="side-bottom">
+        <button className="sidebar-guide" onClick={()=>setGuideOpen(true)}><HelpCircle size={15}/>Guided tour</button>
+        <ThemeControl theme={theme} setTheme={setTheme}/>
+        <div className="user-mini"><span>{me.user.displayName.slice(0,2).toUpperCase()}</span><div><b>{me.user.displayName}</b><small>{business.memberRole} · {plans[business.plan]?.name}</small></div></div>
+        <button className="logout" onClick={logout}><LogOut size={14}/>Sign out</button>
+      </div>
     </aside>
     <main className="workspace">
       <header className="workspace-head"><div><h1>{active?.[1]}</h1><p>{business.name}</p></div><span className={"status "+business.subscriptionStatus}>{business.subscriptionStatus==="trialing"?"Trial · "+workspace.summary.trialDaysLeft+" days left":business.subscriptionStatus}</span></header>
@@ -242,6 +250,7 @@ function AppShell() {
       </div>
       <Toast toast={toast} onClear={()=>setToast(null)}/>
     </main>
+    {guideOpen&&<GuideTour role={role} onSectionChange={setSection} onClose={()=>setGuideOpen(false)}/>}
   </div>;
 }
 
