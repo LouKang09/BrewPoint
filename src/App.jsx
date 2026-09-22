@@ -73,7 +73,7 @@ function Landing() {
   </div>;
 }
 
-function AuthPage({mode}) {
+function AuthPage({mode,destination="/app"}) {
   const nav=useNavigate();
   const [form,setForm]=useState({displayName:"",email:"",password:"",accessCode:""});
   const [error,setError]=useState("");
@@ -82,7 +82,7 @@ function AuthPage({mode}) {
     e.preventDefault();setError("");setLoading(true);
     try{
       await api(mode==="signup"?"/auth/register":"/auth/login",{method:"POST",body:form});
-      nav("/app");
+      nav(destination);
     }catch(err){setError(err.message);}finally{setLoading(false);}
   };
   return <div className="auth-page">
@@ -465,7 +465,7 @@ export default function App() {
     <Route path="/login" element={<AuthPage mode="login"/>}/>
     <Route path="/signup" element={<AuthPage mode="signup"/>}/>
     <Route path="/app" element={<AppShell/>}/>
-    <Route path="/admin" element={<OwnerConsole/>}/><Route path="/owner" element={<Navigate to="/admin"/>}/>
+    <Route path="/admin/login" element={<AuthPage mode="login" destination="/admin"/>}/><Route path="/admin" element={<OwnerConsole/>}/><Route path="/owner" element={<Navigate to="/admin"/>}/>
     <Route path="*" element={<Navigate to="/"/>}/>
   </Routes>;
 }
