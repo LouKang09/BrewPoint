@@ -151,12 +151,22 @@ function AppShell() {
 
   const business=workspace?.business || me.business;
   if(!workspace)return <Loading text="Opening your store…"/>;
-  const active=sections.find(s=>s[0]===section);
+  const role=business.memberRole;
+  const allowedByRole={
+    owner:["dashboard","pos","inventory","products","customers","expenses","reports","team","billing"],
+    admin:["dashboard","pos","inventory","products","customers","expenses","reports","team","billing"],
+    manager:["dashboard","pos","inventory","products","customers","expenses","reports"],
+    inventory:["dashboard","inventory"],
+    cashier:["dashboard","pos","customers"]
+  };
+  const visibleSections=sections.filter(([id])=>(allowedByRole[role]||["dashboard","pos"]).includes(id));
+  const active=visibleSections.find(s=>s[0]===section)||visibleSections[0];
+  if(!visibleSections.some(([id])=>id===section))setTimeout(()=>setSection("dashboard"),0);
   return <div className="app-shell">
     <aside className="sidebar">
       <button className="side-brand" onClick={()=>setSection("dashboard")}><img src={ICON}/><span><b>BrewPoint</b><small>COFFEE POS</small></span></button>
       <div className="tenant"><small>WORKSPACE</small><b><Store size={15}/>{business.name}</b><span>{workspace.branches?.[0]?.name||"Main Branch"}</span></div>
-      <nav>{sections.map(([id,label,Icon])=><button key={id} className={section===id?"active":""} onClick={()=>setSection(id)}><Icon size={17}/>{label}</button>)}</nav>
+      <nav>{visibleSections.map(([id,label,Icon])=><button key={id} className={section===id?"active":""} onClick={()=>setSection(id)}><Icon size={17}/>{label}</button>)}</nav>
       <div className="side-bottom"><div className="user-mini"><span>{me.user.displayName.slice(0,2).toUpperCase()}</span><div><b>{me.user.displayName}</b><small>{business.memberRole} · {plans[business.plan]?.name}</small></div></div><button className="logout" onClick={logout}><LogOut size={14}/>Sign out</button></div>
     </aside>
     <main className="workspace">
