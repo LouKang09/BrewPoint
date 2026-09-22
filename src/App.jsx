@@ -180,7 +180,7 @@ function SupportChat(){
 function Landing() {
   const {theme,setTheme}=useTheme();
   return <div className="marketing">
-    <header className="nav"><Brand compact/><nav><a href="#features">Features</a><a href="#pricing">Pricing</a><ThemeControl theme={theme} setTheme={setTheme} compact/><Link to="/login">Staff sign in</Link><Link to="/owner/login">Owner login</Link><Link className="btn primary small" to="/signup">Start 30 days free</Link></nav></header>
+    <header className="nav"><Brand compact/><nav><a href="#features">Features</a><a href="#pricing">Pricing</a><ThemeControl theme={theme} setTheme={setTheme} compact/><Link to="/login">Sign in</Link><Link className="btn primary small" to="/signup">Start 30 days free</Link></nav></header>
     <section className="hero">
       <div className="hero-copy">
         <span className="pill">30-day free trial · built for coffee businesses</span>
@@ -210,30 +210,68 @@ function Landing() {
   </div>;
 }
 
-function AuthPage({mode,destination="/app",admin=false,owner=false}) {
+function AuthPage({mode,destination="/app",admin=false}) {
   const nav=useNavigate();
+  const initialPortal=admin||new URLSearchParams(window.location.search).get("portal")==="landlord"?"landlord":"tenant";
+  const [portal,setPortal]=useState(initialPortal);
   const [form,setForm]=useState({displayName:"",email:"",password:""});
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(false);
+
   const submit=async e=>{
     e.preventDefault();setError("");setLoading(true);
     try{
-      const endpoint=mode==="signup"?"/auth/register":admin?"/admin/auth/login":owner?"/owner/auth/login":"/auth/login";
+      if(mode==="signup"){
+        const result=await api("/auth/register",{method:"POST",body:form});
+        if(result.token)sessionStorage.setItem(TENANT_TAB_TOKEN,result.token);
+        nav(destination);
+        return;
+      }
+      const landlord=portal==="landlord";
+      const endpoint=landlord?"/admin/auth/login":"/auth/login";
       const result=await api(endpoint,{method:"POST",body:form});
-      if(result.token)sessionStorage.setItem(admin?ADMIN_TAB_TOKEN:TENANT_TAB_TOKEN,result.token);
-      nav(destination);
+      if(result.token)sessionStorage.setItem(landlord?ADMIN_TAB_TOKEN:TENANT_TAB_TOKEN,result.token);
+      nav(landlord?"/admin":"/app");
     }catch(err){setError(err.message);}finally{setLoading(false);}
   };
+
+  const portalLabel=portal==="landlord"?"BrewPoint Landlord":"Tenant Workspace";
   return <div className="auth-page">
-    <aside className="auth-side"><Link to="/" className="auth-logo-link"><img className="auth-official-logo" src={LOGO} alt="BrewPoint"/></Link><h1>{mode==="signup"?"Build a calmer back office for your café.":owner?"Owner access to BrewPoint.":admin?"BrewPoint platform administration.":"Welcome back to BrewPoint."}</h1><p>Sales, recipes, inventory, expenses, customers, staff, branches, and reporting in one workspace.</p><div className="auth-benefits"><span><Check/>30-day trial</span><span><Check/>Private tenant workspace</span><span><Check/>No real payment in testing mode</span></div></aside>
-    <main className="auth-main"><form className="auth-card" onSubmit={submit}><span className="pill">{mode==="signup"?"START FREE":admin?"PLATFORM ADMIN":owner?"OWNER LOGIN":"SIGN IN"}</span><h2>{mode==="signup"?"Create your BrewPoint account":admin?"Open platform administration":owner?"Open owner workspace":"Open your workspace"}</h2>
-      {mode==="signup"&&<label>Full name<input value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Your name" required/></label>}
-      <label>Email<input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="you@coffee.com" required/></label>
-      <label>Password<input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="At least 8 characters" minLength="8" required/></label>
-      {error&&<div className="form-error">{error}</div>}
-      <button className="btn primary wide" disabled={loading}>{loading?"Please wait…":mode==="signup"?"Create account":"Sign in"}</button>
-      <p className="auth-switch">{mode==="signup"?<>Already have an account? <Link to="/login">Sign in</Link></>:admin?<>Business owner? <Link to="/owner/login">Owner login</Link></>:owner?<>Staff account? <Link to="/login">Staff sign in</Link></>:<>New to BrewPoint? <Link to="/signup">Start free</Link> · <Link to="/owner/login">Owner login</Link></>}</p>
-    </form></main>
+    <aside className="auth-side">
+      <Link to="/" className="auth-logo-link"><img className="auth-official-logo" src={LOGO} alt="BrewPoint"/></Link>
+      <h1>{mode==="signup"?"Build a calmer back office for your café.":portal==="landlord"?"Manage BrewPoint from one secure console.":"Welcome back to BrewPoint."}</h1>
+      <p>{mode==="signup"?"Start your café workspace with POS, recipes, inventory, customers, staff, branches, and reporting.":portal==="landlord"?"Platform administration for tenants, trials, subscriptions, support, security, and SaaS operations.":"Use one tenant login for Owner, Tenant Admin, Manager, Inventory, or Cashier. BrewPoint opens the permissions assigned to your account automatically."}</p>
+      <div className="auth-benefits">
+        {portal==="landlord"&&mode!=="signup"?<>
+          <span><ShieldCheck/>Landlord-only administration</span>
+          <span><Check/>Tenant & subscription oversight</span>
+          <span><Check/>Independent tab session</span>
+        </>:<>
+          <span><Check/>30-day Starter trial</span>
+          <span><Check/>Role-based tenant access</span>
+          <span><Check/>Private tenant workspace</span>
+        </>}
+      </div>
+    </aside>
+    <main className="auth-main">
+      <form className="auth-card" onSubmit={submit}>
+        <span className="pill">{mode==="signup"?"START FREE":portal==="landlord"?"LANDLORD":"TENANT"}</span>
+        <h2>{mode==="signup"?"Create your BrewPoint account":"Sign in to BrewPoint"}</h2>
+        {mode!=="signup"&&<label>Access portal
+          <select className="auth-portal-select" value={portal} onChange={e=>{setPortal(e.target.value);setError("");}}>
+            <option value="tenant">Tenant — Owner / Admin / Staff</option>
+            <option value="landlord">Landlord — BrewPoint Platform Admin</option>
+          </select>
+          <small className="field-help">{portal==="tenant"?"Your role is detected automatically after sign in.":"Restricted to the BrewPoint landlord/platform administrator."}</small>
+        </label>}
+        {mode==="signup"&&<label>Full name<input value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Your name" required/></label>}
+        <label>Email<input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="you@coffee.com" required/></label>
+        <label>Password<input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="At least 8 characters" minLength="8" required/></label>
+        {error&&<div className="form-error">{error}</div>}
+        <button className="btn primary wide" disabled={loading}>{loading?"Please wait…":mode==="signup"?"Create account":"Sign in as "+portalLabel}</button>
+        <p className="auth-switch">{mode==="signup"?<>Already have an account? <Link to="/login">Sign in</Link></>:<>New café? <Link to="/signup">Start free</Link></>}</p>
+      </form>
+    </main>
   </div>;
 }
 
@@ -1246,7 +1284,7 @@ export default function App() {
     <Route path="/login" element={<AuthPage mode="login"/>}/>
     <Route path="/signup" element={<AuthPage mode="signup"/>}/>
     <Route path="/app" element={<AppShell/>}/>
-    <Route path="/owner/login" element={<AuthPage mode="login" destination="/app" owner/>}/><Route path="/owner" element={<Navigate to="/owner/login"/>}/><Route path="/admin/login" element={<AuthPage mode="login" destination="/admin" admin/>}/><Route path="/admin" element={<OwnerConsole/>}/>
+    <Route path="/owner/login" element={<Navigate to="/login?portal=tenant" replace/>}/><Route path="/owner" element={<Navigate to="/login?portal=tenant" replace/>}/><Route path="/admin/login" element={<Navigate to="/login?portal=landlord" replace/>}/><Route path="/admin" element={<OwnerConsole/>}/>
     <Route path="*" element={<Navigate to="/"/>}/>
   </Routes>;
 }
