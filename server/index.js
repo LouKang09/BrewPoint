@@ -337,6 +337,10 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.post("/api/auth/register", async (req, res) => {
+  const requiredAccessCode = String(process.env.BETA_ACCESS_CODE || "");
+  if (requiredAccessCode && String(req.body.accessCode || "") !== requiredAccessCode) {
+    return res.status(403).json({ message: "Invalid BrewPoint beta access code." });
+  }
   const email = String(req.body.email || "").trim().toLowerCase();
   const displayName = String(req.body.displayName || "").trim();
   const password = String(req.body.password || "");
