@@ -41,7 +41,7 @@ app.use(helmet({
   }
 }));
 app.use(compression());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
 const PLAN_LIMITS = {
@@ -230,10 +230,40 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_qr_data TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_account_name TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_account_number TEXT;
+    ALTER TABLE business_members ADD COLUMN IF NOT EXISTS branch_id BIGINT;
+    ALTER TABLE promos ADD COLUMN IF NOT EXISTS rules JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE sales ADD COLUMN IF NOT EXISTS special_discount_type TEXT;
+    ALTER TABLE sales ADD COLUMN IF NOT EXISTS special_discount_reference TEXT;
+
+    CREATE TABLE IF NOT EXISTS support_tickets (
+      id BIGSERIAL PRIMARY KEY,
+      public_token TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS support_messages (
+      id BIGSERIAL PRIMARY KEY,
+      ticket_id BIGINT NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+      sender_type TEXT NOT NULL,
+      sender_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sales_business_created ON sales(business_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_inventory_business_created ON inventory_movements(business_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_business_created ON audit_logs(business_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_expenses_business_spent ON expenses(business_id, spent_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_support_tickets_updated ON support_tickets(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_support_messages_ticket ON support_messages(ticket_id, created_at);
   `);
 }
 
@@ -273,9 +303,9 @@ async function auth(req, res, next) {
 
 async function getContext(userId) {
   const { rows } = await pool.query(
-    `SELECT bm.business_id,bm.role,b.name,b.slug,b.plan,b.subscription_status,
+    `SELECT bm.business_id,bm.role,bm.branch_id,b.name,b.slug,b.plan,b.subscription_status,
             b.trial_started_at,b.trial_ends_at,b.current_period_end,b.currency,
-            b.timezone,b.is_suspended
+            b.timezone,b.is_suspended,b.gcash_qr_data,b.gcash_account_name,b.gcash_account_number
        FROM business_members bm
        JOIN businesses b ON b.id=bm.business_id
       WHERE bm.user_id=$1 AND bm.is_active=true
@@ -325,6 +355,17 @@ function reportStart(period) {
     y = t.getUTCFullYear(); m = t.getUTCMonth(); d = t.getUTCDate();
   }
   return new Date(Date.UTC(y, m, d) - 8 * 3600000);
+}
+
+async function resolvePromoRules(client,businessId,promo){
+  let rules=Array.isArray(promo?.rules)?promo.rules:[];
+  if(!rules.length && String(promo?.name||"").toLowerCase().includes("143")){
+    const {rows}=await client.query(`SELECT id,name FROM product_categories WHERE business_id=$1 AND is_active=true ORDER BY id`,[businessId]);
+    const coffee=rows.find(x=>String(x.name).toLowerCase()==="coffee")||rows.find(x=>String(x.name).toLowerCase().includes("coffee"));
+    const food=rows.find(x=>String(x.name).toLowerCase()==="food")||rows.find(x=>String(x.name).toLowerCase().includes("food"));
+    if(coffee&&food)rules=[{categoryId:String(coffee.id),qty:1},{categoryId:String(food.id),qty:1}];
+  }
+  return rules.map(r=>({categoryId:String(r.categoryId||""),qty:Math.max(1,Number(r.qty||1))})).filter(r=>r.categoryId);
 }
 
 app.get("/api/health", async (_req, res) => {
@@ -485,8 +526,8 @@ app.post("/api/business/setup", auth, async (req, res) => {
       );
     }
     await client.query(
-      "INSERT INTO promos(business_id,name,promo_type,value) VALUES($1,'143 Promo','set_price',143)",
-      [business.id]
+      "INSERT INTO promos(business_id,name,promo_type,value,rules) VALUES($1,'143 Promo','set_price',143,$2::jsonb)",
+      [business.id, JSON.stringify([{categoryId:String(categoryIds["Coffee"]),qty:1},{categoryId:String(categoryIds["Food"]),qty:1}])]
     );
     await audit(client, business.id, req.user.id, "BUSINESS_CREATED", "business", business.id, "30-day " + plan + " trial started");
     await client.query("COMMIT");
@@ -512,7 +553,7 @@ app.get("/api/workspace", auth, requireContext, async (req, res) => {
     pool.query("SELECT * FROM expenses WHERE business_id=$1 ORDER BY spent_at DESC LIMIT 100", [businessId]),
     pool.query("SELECT * FROM promos WHERE business_id=$1 ORDER BY created_at DESC", [businessId]),
     pool.query("SELECT * FROM customers WHERE business_id=$1 ORDER BY created_at DESC LIMIT 100", [businessId]),
-    pool.query(`SELECT bm.*,u.display_name,u.email FROM business_members bm JOIN users u ON u.id=bm.user_id WHERE bm.business_id=$1 ORDER BY bm.created_at`, [businessId]),
+    pool.query(`SELECT bm.*,u.display_name,u.email,br.name AS assigned_branch_name FROM business_members bm JOIN users u ON u.id=bm.user_id LEFT JOIN branches br ON br.id=bm.branch_id WHERE bm.business_id=$1 ORDER BY bm.created_at`, [businessId]),
     pool.query(`SELECT a.*,u.display_name FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id WHERE a.business_id=$1 ORDER BY a.created_at DESC LIMIT 100`, [businessId]),
     pool.query(`SELECT im.*,i.name AS ingredient_name,i.uom,b.name AS branch_name FROM inventory_movements im JOIN ingredients i ON i.id=im.ingredient_id LEFT JOIN branches b ON b.id=im.branch_id WHERE im.business_id=$1 ORDER BY im.created_at DESC LIMIT 100`, [businessId])
   ]);
@@ -543,7 +584,10 @@ app.get("/api/workspace", auth, requireContext, async (req, res) => {
       id:String(businessId),name:req.context.name,slug:req.context.slug,plan:req.context.plan,
       subscriptionStatus:req.context.subscription_status,trialEndsAt:req.context.trial_ends_at,
       currentPeriodEnd:req.context.current_period_end,isSuspended:req.context.is_suspended,
-      memberRole:req.context.role,staffLimit:PLAN_LIMITS[req.context.plan]?.staff || 3,
+      memberRole:req.context.role,assignedBranchId:req.context.branch_id?String(req.context.branch_id):null,
+      gcashQrData:req.context.gcash_qr_data||null,gcashAccountName:req.context.gcash_account_name||null,
+      gcashAccountNumber:req.context.gcash_account_number||null,
+      staffLimit:PLAN_LIMITS[req.context.plan]?.staff || 3,
       branchLimit:PLAN_LIMITS[req.context.plan]?.branches || 1
     },
     branches: branches.rows, categories: categories.rows, products: products.rows,
@@ -573,28 +617,50 @@ app.post("/api/pos/checkout", auth, requireContext, async (req, res) => {
   if (ctx.subscription_status === "trialing" && new Date(ctx.trial_ends_at).getTime() <= Date.now()) {
     return res.status(403).json({ message: "Your 30-day trial has ended. Choose a plan to continue taking sales." });
   }
-  const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+  const regularItems = Array.isArray(req.body.items) ? req.body.items : [];
+  const promoBundles = Array.isArray(req.body.promoBundles) ? req.body.promoBundles : [];
   const branchId = String(req.body.branchId || "");
   const paymentMethod = req.body.paymentMethod === "gcash" ? "gcash" : "cash";
   const paymentReference = String(req.body.paymentReference || "").trim();
   const customerId = req.body.customerId ? String(req.body.customerId) : null;
-  const promoId = req.body.promoId ? String(req.body.promoId) : null;
   const tendered = req.body.tendered == null ? null : Number(req.body.tendered);
-  if (!items.length) return res.status(400).json({ message: "Add at least one product." });
-  if (paymentMethod === "gcash" && !paymentReference) return res.status(400).json({ message: "GCash reference is required." });
+  const specialDiscountType = ["senior","pwd"].includes(req.body.specialDiscountType) ? req.body.specialDiscountType : null;
+  const specialDiscountReference = String(req.body.specialDiscountReference || "").trim() || null;
+
+  if (!regularItems.length && !promoBundles.length) return res.status(400).json({ message: "Add at least one product or promo." });
+  if (paymentMethod === "gcash" && !paymentReference) return res.status(400).json({ message: "Enter the GCash payment reference after the customer scans and pays." });
+  if (specialDiscountType && promoBundles.length) return res.status(400).json({ message: "Senior/PWD 20% discount cannot be combined with an existing promo." });
+  if (ctx.branch_id && String(ctx.branch_id)!==branchId) return res.status(403).json({message:"You can only take sales for your assigned branch."});
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const branch = await client.query("SELECT id FROM branches WHERE id=$1 AND business_id=$2 AND is_active=true", [branchId, ctx.business_id]);
     if (!branch.rowCount) throw new Error("Invalid branch.");
-    const productIds = [...new Set(items.map(i=>String(i.productId)))];
+
+    const bundleSelections = promoBundles.flatMap(b=>Array.isArray(b.selections)?b.selections:[]);
+    const allRequested = [...regularItems,...bundleSelections];
+    const productIds = [...new Set(allRequested.map(i=>String(i.productId)).filter(Boolean))];
+    if(!productIds.length) throw new Error("No valid products selected.");
+
     const { rows: productRows } = await client.query(
-      "SELECT id,name,price,is_active FROM products WHERE business_id=$1 AND id = ANY($2::bigint[])",
+      `SELECT p.id,p.name,p.price,p.is_active,p.category_id,pc.name AS category_name
+       FROM products p LEFT JOIN product_categories pc ON pc.id=p.category_id
+       WHERE p.business_id=$1 AND p.id = ANY($2::bigint[])`,
       [ctx.business_id, productIds]
     );
     if (productRows.length !== productIds.length || productRows.some(p=>!p.is_active)) throw new Error("One or more products are unavailable.");
     const productMap = new Map(productRows.map(p=>[String(p.id),p]));
+
+    const normalizedQty = new Map();
+    for(const item of allRequested){
+      const id=String(item.productId||"");
+      const qty=Number(item.qty||0);
+      if(!productMap.has(id)||qty<=0)throw new Error("Invalid product quantity.");
+      normalizedQty.set(id,(normalizedQty.get(id)||0)+qty);
+    }
+
     const { rows: recipeRows } = await client.query(
       `SELECT pi.product_id,pi.ingredient_id,pi.qty_required,i.name,i.stock_qty,i.low_stock_threshold
        FROM product_ingredients pi JOIN ingredients i ON i.id=pi.ingredient_id
@@ -604,57 +670,78 @@ app.post("/api/pos/checkout", auth, requireContext, async (req, res) => {
     );
     const required = new Map();
     for (const recipe of recipeRows) {
-      const cart = items.find(i=>String(i.productId)===String(recipe.product_id));
+      const qty=normalizedQty.get(String(recipe.product_id))||0;
       const key = String(recipe.ingredient_id);
       const current = required.get(key) || { ingredientId:key,name:recipe.name,qty:0,stock:Number(recipe.stock_qty),low:Number(recipe.low_stock_threshold) };
-      current.qty += Number(recipe.qty_required) * Number(cart.qty);
+      current.qty += Number(recipe.qty_required) * qty;
       required.set(key,current);
     }
     const insufficient = [...required.values()].filter(x=>x.qty>x.stock);
     if (insufficient.length) throw new Error("Not enough stock: " + insufficient.map(x=>x.name).join(", "));
+
     let subtotal = 0;
-    for (const item of items) {
-      const p = productMap.get(String(item.productId));
-      const qty = Number(item.qty);
-      if (!qty || qty <= 0) throw new Error("Invalid quantity.");
-      subtotal += Number(p.price) * qty;
+    for (const item of regularItems) subtotal += Number(productMap.get(String(item.productId)).price) * Number(item.qty);
+
+    let promoDiscount=0;
+    const promoNames=[];
+    for(const bundle of promoBundles){
+      const promoId=String(bundle.promoId||"");
+      const {rows}=await client.query("SELECT * FROM promos WHERE id=$1 AND business_id=$2 AND is_active=true",[promoId,ctx.business_id]);
+      const promo=rows[0];
+      if(!promo)throw new Error("A selected promo is no longer active.");
+      if(promo.starts_at&&new Date(promo.starts_at)>new Date())throw new Error(promo.name+" has not started.");
+      if(promo.ends_at&&new Date(promo.ends_at)<new Date())throw new Error(promo.name+" has ended.");
+      const rules=await resolvePromoRules(client,ctx.business_id,promo);
+      if(!rules.length)throw new Error(promo.name+" has no product rules configured yet.");
+
+      const selections=Array.isArray(bundle.selections)?bundle.selections:[];
+      const expected=rules.reduce((sum,r)=>sum+Number(r.qty),0);
+      const selectedCount=selections.reduce((sum,x)=>sum+Number(x.qty||0),0);
+      if(selectedCount!==expected)throw new Error("Complete all selections for "+promo.name+".");
+
+      for(const rule of rules){
+        const matched=selections.filter(x=>String(productMap.get(String(x.productId))?.category_id)===String(rule.categoryId)).reduce((sum,x)=>sum+Number(x.qty||0),0);
+        if(matched!==Number(rule.qty))throw new Error(promo.name+" requires "+rule.qty+" item(s) from its configured category.");
+      }
+      const allowed=new Set(rules.map(r=>String(r.categoryId)));
+      if(selections.some(x=>!allowed.has(String(productMap.get(String(x.productId))?.category_id))))throw new Error("A selected promo item is outside the promo rules.");
+
+      const bundleRetail=selections.reduce((sum,x)=>sum+Number(productMap.get(String(x.productId)).price)*Number(x.qty),0);
+      subtotal+=bundleRetail;
+      const value=Number(promo.value);
+      if(promo.promo_type==="percentage")promoDiscount+=Math.min(bundleRetail,bundleRetail*value/100);
+      else if(promo.promo_type==="set_price")promoDiscount+=Math.max(0,bundleRetail-value);
+      else promoDiscount+=Math.min(bundleRetail,value);
+      promoNames.push(promo.name);
     }
-    let discount = Math.max(0, Number(req.body.discount || 0));
-    let promoLabel = "";
-    if (promoId) {
-      const { rows } = await client.query("SELECT * FROM promos WHERE id=$1 AND business_id=$2 AND is_active=true", [promoId, ctx.business_id]);
-      const promo = rows[0];
-      if (!promo) throw new Error("Selected promo is not active.");
-      if (promo.starts_at && new Date(promo.starts_at) > new Date()) throw new Error("Promo has not started.");
-      if (promo.ends_at && new Date(promo.ends_at) < new Date()) throw new Error("Promo has ended.");
-      const value = Number(promo.value);
-      if (promo.promo_type === "percentage") discount = Math.min(subtotal, subtotal * value / 100);
-      else if (promo.promo_type === "set_price") discount = Math.max(0, subtotal - value);
-      else discount = Math.min(subtotal, value);
-      promoLabel = promo.name;
-    }
-    const total = Math.max(0, subtotal - discount);
+
+    let discount=promoDiscount;
+    if(specialDiscountType)discount=Math.min(subtotal,subtotal*.20);
+    const total=Math.max(0,subtotal-discount);
+
     if (paymentMethod === "cash" && tendered != null && tendered < total) throw new Error("Tendered cash is below the total.");
     if (customerId) {
       const check = await client.query("SELECT id FROM customers WHERE id=$1 AND business_id=$2", [customerId, ctx.business_id]);
       if (!check.rowCount) throw new Error("Invalid customer.");
     }
+
     const referenceNo = "BP-" + new Date().toISOString().slice(0,10).replace(/-/g,"") + "-" + nanoid(5).toUpperCase();
     const changeDue = paymentMethod === "cash" && tendered != null ? tendered-total : 0;
     const { rows: saleRows } = await client.query(
-      `INSERT INTO sales(business_id,branch_id,cashier_user_id,customer_id,reference_no,payment_method,payment_reference,subtotal,discount,total,tendered,change_due)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-      [ctx.business_id,branchId,req.user.id,customerId,referenceNo,paymentMethod,paymentReference||null,subtotal,discount,total,tendered,changeDue]
+      `INSERT INTO sales(business_id,branch_id,cashier_user_id,customer_id,reference_no,payment_method,payment_reference,subtotal,discount,total,tendered,change_due,special_discount_type,special_discount_reference)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      [ctx.business_id,branchId,req.user.id,customerId,referenceNo,paymentMethod,paymentReference||null,subtotal,discount,total,tendered,changeDue,specialDiscountType,specialDiscountReference]
     );
     const saleId = saleRows[0].id;
-    for (const item of items) {
-      const p = productMap.get(String(item.productId));
-      const qty = Number(item.qty);
+
+    for (const [productId,qty] of normalizedQty.entries()) {
+      const p=productMap.get(productId);
       await client.query(
         "INSERT INTO sale_items(sale_id,product_id,product_name,qty,unit_price,line_total) VALUES($1,$2,$3,$4,$5,$6)",
         [saleId,p.id,p.name,qty,p.price,Number(p.price)*qty]
       );
     }
+
     const lowStockNames = [];
     for (const entry of required.values()) {
       const balance = entry.stock-entry.qty;
@@ -666,9 +753,13 @@ app.post("/api/pos/checkout", auth, requireContext, async (req, res) => {
       );
       if (balance <= entry.low) lowStockNames.push(entry.name);
     }
-    await audit(client,ctx.business_id,req.user.id,"SALE_COMPLETED","sale",saleId,referenceNo+" · "+paymentMethod.toUpperCase()+" · ₱"+total.toFixed(2)+(promoLabel?" · "+promoLabel:""));
+
+    const detail=[referenceNo,paymentMethod.toUpperCase(),"₱"+total.toFixed(2)];
+    if(promoNames.length)detail.push("Promo: "+promoNames.join(", "));
+    if(specialDiscountType)detail.push((specialDiscountType==="senior"?"Senior":"PWD")+" 20%");
+    await audit(client,ctx.business_id,req.user.id,"SALE_COMPLETED","sale",saleId,detail.join(" · "));
     await client.query("COMMIT");
-    res.json({ saleId:String(saleId),referenceNo,total,changeDue,lowStockNames });
+    res.json({ saleId:String(saleId),referenceNo,total,discount,changeDue,lowStockNames });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(400).json({ message:error.message || "Checkout failed." });
@@ -845,15 +936,20 @@ app.post("/api/promos", auth, requireContext, allow("owner","admin","manager"), 
   const name=String(req.body.name||"").trim();
   const type=["set_price","fixed_discount","percentage"].includes(req.body.promoType)?req.body.promoType:"fixed_discount";
   const value=Number(req.body.value);
+  const rules=Array.isArray(req.body.rules)?req.body.rules.map(r=>({categoryId:String(r.categoryId||""),qty:Math.max(1,Number(r.qty||1))})).filter(r=>r.categoryId):[];
   if(name.length<2||!value||value<=0)return res.status(400).json({message:"Enter a valid promo name and value."});
   if(type==="percentage"&&value>100)return res.status(400).json({message:"Percentage cannot exceed 100."});
+  for(const rule of rules){
+    const found=await pool.query("SELECT id FROM product_categories WHERE id=$1 AND business_id=$2 AND is_active=true",[rule.categoryId,req.context.business_id]);
+    if(!found.rowCount)return res.status(400).json({message:"One promo category is invalid."});
+  }
   if(req.body.id){
-    const {rows}=await pool.query("UPDATE promos SET name=$1,promo_type=$2,value=$3,is_active=$4 WHERE id=$5 AND business_id=$6 RETURNING id",[name,type,value,req.body.isActive!==false,String(req.body.id),req.context.business_id]);
+    const {rows}=await pool.query("UPDATE promos SET name=$1,promo_type=$2,value=$3,is_active=$4,rules=$5::jsonb WHERE id=$6 AND business_id=$7 RETURNING id",[name,type,value,req.body.isActive!==false,JSON.stringify(rules),String(req.body.id),req.context.business_id]);
     if(!rows[0])return res.status(404).json({message:"Promo not found."});
     await audit(pool,req.context.business_id,req.user.id,"PROMO_UPDATED","promo",rows[0].id,name);
     return res.json({id:String(rows[0].id)});
   }
-  const {rows}=await pool.query(`INSERT INTO promos(business_id,name,promo_type,value,is_active) VALUES($1,$2,$3,$4,true) RETURNING id`,[req.context.business_id,name,type,value]);
+  const {rows}=await pool.query(`INSERT INTO promos(business_id,name,promo_type,value,is_active,rules) VALUES($1,$2,$3,$4,true,$5::jsonb) RETURNING id`,[req.context.business_id,name,type,value,JSON.stringify(rules)]);
   await audit(pool,req.context.business_id,req.user.id,"PROMO_CREATED","promo",rows[0].id,name);
   res.json({id:String(rows[0].id)});
 });
@@ -871,7 +967,10 @@ app.post("/api/staff", auth, requireContext, allow("owner","admin"), async(req,r
   const displayName=String(req.body.displayName||"").trim();
   const password=String(req.body.password||"");
   const role=["admin","manager","cashier","inventory"].includes(req.body.role)?req.body.role:"cashier";
+  const branchId=String(req.body.branchId||"");
   if(!email.includes("@")||displayName.length<2||password.length<8)return res.status(400).json({message:"Enter valid staff details and a password of at least 8 characters."});
+  const branch=await pool.query("SELECT id FROM branches WHERE id=$1 AND business_id=$2 AND is_active=true",[branchId,req.context.business_id]);
+  if(!branch.rowCount)return res.status(400).json({message:"Select a valid branch for this staff member."});
   const {rows:[count]}=await pool.query("SELECT count(*)::int AS count FROM business_members WHERE business_id=$1 AND is_active=true",[req.context.business_id]);
   if(count.count>=PLAN_LIMITS[req.context.plan].staff)return res.status(400).json({message:"Your plan's active staff limit has been reached."});
   const client=await pool.connect();
@@ -881,8 +980,8 @@ app.post("/api/staff", auth, requireContext, allow("owner","admin"), async(req,r
     if(existing.rowCount)throw new Error("That email already has a BrewPoint account.");
     const hash=await bcrypt.hash(password,12);
     const {rows}=await client.query("INSERT INTO users(email,display_name,password_hash) VALUES($1,$2,$3) RETURNING id",[email,displayName,hash]);
-    await client.query("INSERT INTO business_members(business_id,user_id,role) VALUES($1,$2,$3)",[req.context.business_id,rows[0].id,role]);
-    await audit(client,req.context.business_id,req.user.id,"STAFF_CREATED","user",rows[0].id,displayName+" · "+role);
+    await client.query("INSERT INTO business_members(business_id,user_id,role,branch_id) VALUES($1,$2,$3,$4)",[req.context.business_id,rows[0].id,role,branchId]);
+    await audit(client,req.context.business_id,req.user.id,"STAFF_CREATED","user",rows[0].id,displayName+" · "+role+" · branch "+branchId);
     await client.query("COMMIT");
     res.json({userId:rows[0].id});
   }catch(error){await client.query("ROLLBACK");res.status(400).json({message:error.message});}finally{client.release();}
@@ -903,6 +1002,29 @@ app.post("/api/staff/toggle", auth, requireContext, allow("owner","admin"), asyn
   res.json({ok:true});
 });
 
+app.post("/api/staff/branch", auth, requireContext, allow("owner","admin"), async(req,res)=>{
+  const memberId=String(req.body.memberId||"");
+  const branchId=String(req.body.branchId||"");
+  const member=await pool.query("SELECT * FROM business_members WHERE id=$1 AND business_id=$2",[memberId,req.context.business_id]);
+  if(!member.rowCount)return res.status(404).json({message:"Staff member not found."});
+  if(member.rows[0].role==="owner")return res.status(400).json({message:"The business owner is not branch-restricted."});
+  const branch=await pool.query("SELECT id,name FROM branches WHERE id=$1 AND business_id=$2 AND is_active=true",[branchId,req.context.business_id]);
+  if(!branch.rowCount)return res.status(400).json({message:"Invalid branch."});
+  await pool.query("UPDATE business_members SET branch_id=$1 WHERE id=$2",[branchId,memberId]);
+  await audit(pool,req.context.business_id,req.user.id,"STAFF_BRANCH_CHANGED","user",member.rows[0].user_id,branch.rows[0].name);
+  res.json({ok:true});
+});
+
+app.post("/api/business/gcash", auth, requireContext, allow("owner","admin"), async(req,res)=>{
+  const qrData=String(req.body.qrData||"");
+  const accountName=String(req.body.accountName||"").trim();
+  const accountNumber=String(req.body.accountNumber||"").trim();
+  if(qrData && (!qrData.startsWith("data:image/") || qrData.length>900000))return res.status(400).json({message:"Use a JPG, PNG, or WEBP QR image below about 650 KB."});
+  await pool.query("UPDATE businesses SET gcash_qr_data=$1,gcash_account_name=$2,gcash_account_number=$3,updated_at=now() WHERE id=$4",[qrData||null,accountName||null,accountNumber||null,req.context.business_id]);
+  await audit(pool,req.context.business_id,req.user.id,"GCASH_QR_UPDATED","business",req.context.business_id,accountName||"GCash QR");
+  res.json({ok:true});
+});
+
 app.post("/api/branches", auth, requireContext, allow("owner","admin"), async(req,res)=>{
   const name=String(req.body.name||"").trim();
   if(name.length<2)return res.status(400).json({message:"Branch name is required."});
@@ -919,7 +1041,8 @@ app.get("/api/reports", auth, requireContext, async(req,res)=>{
     const startAt=req.query.start?new Date(String(req.query.start)+"T00:00:00+08:00"):reportStart(period);
     const endAt=req.query.end?new Date(String(req.query.end)+"T23:59:59.999+08:00"):new Date();
     if(Number.isNaN(startAt.getTime())||Number.isNaN(endAt.getTime())||endAt<startAt)return res.status(400).json({message:"Invalid report date range."});
-    const branchId=req.query.branchId?String(req.query.branchId):null;
+    let branchId=req.query.branchId?String(req.query.branchId):null;
+    if(req.context.branch_id && req.context.role!=="owner") branchId=String(req.context.branch_id);
     const employeeId=req.query.employeeId?Number(req.query.employeeId):null;
     const businessId=req.context.business_id;
     const params=[businessId,startAt,endAt,branchId,employeeId];
@@ -1094,6 +1217,93 @@ app.post("/api/subscription/change", auth, requireContext, allow("owner","admin"
   await pool.query(`UPDATE businesses SET plan=$1,subscription_status=$2,current_period_end=$3,is_suspended=false,updated_at=now() WHERE id=$4`,[plan,activate?"active":req.context.subscription_status,activate?new Date(Date.now()+30*86400000):req.context.current_period_end,req.context.business_id]);
   await audit(pool,req.context.business_id,req.user.id,activate?"DEMO_SUBSCRIPTION_ACTIVATED":"PLAN_CHANGED","subscription",req.context.business_id,plan);
   res.json({plan,subscriptionStatus:activate?"active":req.context.subscription_status});
+});
+
+const PUBLIC_FAQS=[
+  {q:"How long is the free trial?",a:"Every new BrewPoint tenant receives a 30-day trial before a paid plan is required."},
+  {q:"What payments does BrewPoint support?",a:"The POS supports Cash and GCash. GCash can display the café's uploaded QR for scan-to-pay, with the cashier recording the payment reference."},
+  {q:"Can BrewPoint track ingredients?",a:"Yes. Product recipes deduct ingredient quantities automatically after completed sales, with stock alerts and movement history."},
+  {q:"Can I use BrewPoint for multiple branches?",a:"Yes. Branch limits depend on your Starter, Pro, or Business plan."},
+  {q:"Does BrewPoint have Senior/PWD discounts?",a:"Yes. The POS includes a 20% Senior/PWD option that is intentionally non-stackable with existing promos."}
+];
+
+app.get("/api/support/faqs",(_req,res)=>res.json({faqs:PUBLIC_FAQS}));
+
+app.post("/api/support/tickets",async(req,res)=>{
+  const name=String(req.body.name||"").trim();
+  const email=String(req.body.email||"").trim().toLowerCase();
+  const message=String(req.body.message||"").trim();
+  if(name.length<2||!email.includes("@")||message.length<3)return res.status(400).json({message:"Enter your name, email, and question."});
+  const token=nanoid(28);
+  const subject=String(req.body.subject||message.slice(0,80)||"BrewPoint question").trim().slice(0,120);
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const {rows}=await client.query("INSERT INTO support_tickets(public_token,name,email,subject) VALUES($1,$2,$3,$4) RETURNING id,public_token,status,created_at",[token,name,email,subject]);
+    await client.query("INSERT INTO support_messages(ticket_id,sender_type,message) VALUES($1,'visitor',$2)",[rows[0].id,message]);
+    await client.query("COMMIT");
+    res.json({ticketId:String(rows[0].id),token:rows[0].public_token,status:rows[0].status,createdAt:rows[0].created_at});
+  }catch(error){await client.query("ROLLBACK");res.status(500).json({message:"Unable to create support ticket."});}finally{client.release();}
+});
+
+app.get("/api/support/tickets/:token",async(req,res)=>{
+  const token=String(req.params.token||"");
+  const ticket=await pool.query("SELECT id,name,email,subject,status,created_at,updated_at FROM support_tickets WHERE public_token=$1",[token]);
+  if(!ticket.rowCount)return res.status(404).json({message:"Ticket not found."});
+  const messages=await pool.query(`SELECT sm.id,sm.sender_type,sm.message,sm.created_at,u.display_name
+    FROM support_messages sm LEFT JOIN users u ON u.id=sm.sender_user_id WHERE sm.ticket_id=$1 ORDER BY sm.created_at`,[ticket.rows[0].id]);
+  res.json({ticket:{...ticket.rows[0],id:String(ticket.rows[0].id)},messages:messages.rows});
+});
+
+app.post("/api/support/tickets/:token/messages",async(req,res)=>{
+  const token=String(req.params.token||"");
+  const message=String(req.body.message||"").trim();
+  if(message.length<2)return res.status(400).json({message:"Enter a message."});
+  const ticket=await pool.query("SELECT id,status FROM support_tickets WHERE public_token=$1",[token]);
+  if(!ticket.rowCount)return res.status(404).json({message:"Ticket not found."});
+  if(ticket.rows[0].status==="closed")return res.status(400).json({message:"This ticket is closed."});
+  await pool.query("INSERT INTO support_messages(ticket_id,sender_type,message) VALUES($1,'visitor',$2)",[ticket.rows[0].id,message]);
+  await pool.query("UPDATE support_tickets SET status='open',updated_at=now() WHERE id=$1",[ticket.rows[0].id]);
+  res.json({ok:true});
+});
+
+app.get("/api/admin/support",auth,async(req,res)=>{
+  if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
+  const {rows}=await pool.query(`SELECT t.*,
+    (SELECT message FROM support_messages sm WHERE sm.ticket_id=t.id ORDER BY sm.created_at DESC LIMIT 1) AS last_message,
+    (SELECT sender_type FROM support_messages sm WHERE sm.ticket_id=t.id ORDER BY sm.created_at DESC LIMIT 1) AS last_sender,
+    (SELECT count(*)::int FROM support_messages sm WHERE sm.ticket_id=t.id) AS message_count
+    FROM support_tickets t ORDER BY CASE WHEN t.status='open' THEN 0 WHEN t.status='answered' THEN 1 ELSE 2 END,t.updated_at DESC LIMIT 300`);
+  res.json({tickets:rows});
+});
+
+app.get("/api/admin/support/:id",auth,async(req,res)=>{
+  if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
+  const ticket=await pool.query("SELECT * FROM support_tickets WHERE id=$1",[String(req.params.id||"")]);
+  if(!ticket.rowCount)return res.status(404).json({message:"Ticket not found."});
+  const messages=await pool.query(`SELECT sm.*,u.display_name FROM support_messages sm LEFT JOIN users u ON u.id=sm.sender_user_id WHERE sm.ticket_id=$1 ORDER BY sm.created_at`,[ticket.rows[0].id]);
+  res.json({ticket:ticket.rows[0],messages:messages.rows});
+});
+
+app.post("/api/admin/support/:id/reply",auth,async(req,res)=>{
+  if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
+  const ticketId=String(req.params.id||"");
+  const message=String(req.body.message||"").trim();
+  if(message.length<2)return res.status(400).json({message:"Enter a reply."});
+  const ticket=await pool.query("SELECT id FROM support_tickets WHERE id=$1",[ticketId]);
+  if(!ticket.rowCount)return res.status(404).json({message:"Ticket not found."});
+  await pool.query("INSERT INTO support_messages(ticket_id,sender_type,sender_user_id,message) VALUES($1,'admin',$2,$3)",[ticketId,req.user.id,message]);
+  await pool.query("UPDATE support_tickets SET status='answered',updated_at=now() WHERE id=$1",[ticketId]);
+  res.json({ok:true});
+});
+
+app.post("/api/admin/support/:id/status",auth,async(req,res)=>{
+  if(req.user.platform_role!=="platform_admin")return res.status(403).json({message:"Platform owner access required."});
+  const status=["open","answered","closed"].includes(req.body.status)?req.body.status:null;
+  if(!status)return res.status(400).json({message:"Invalid ticket status."});
+  const updated=await pool.query("UPDATE support_tickets SET status=$1,updated_at=now() WHERE id=$2 RETURNING id",[status,String(req.params.id||"")]);
+  if(!updated.rowCount)return res.status(404).json({message:"Ticket not found."});
+  res.json({ok:true});
 });
 
 app.get("/api/landlord", auth, async(req,res)=>{
