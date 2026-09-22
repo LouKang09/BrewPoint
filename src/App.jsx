@@ -75,7 +75,7 @@ function Landing() {
 
 function AuthPage({mode}) {
   const nav=useNavigate();
-  const [form,setForm]=useState({displayName:"",email:"",password:""});
+  const [form,setForm]=useState({displayName:"",email:"",password:"",accessCode:""});
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(false);
   const submit=async e=>{
@@ -89,6 +89,7 @@ function AuthPage({mode}) {
     <aside className="auth-side"><Brand/><h1>{mode==="signup"?"Build a calmer back office for your café.":"Welcome back to BrewPoint."}</h1><p>Sales, recipes, inventory, expenses, customers, staff, branches, and reporting in one workspace.</p><div className="auth-benefits"><span><Check/>30-day trial</span><span><Check/>Private tenant workspace</span><span><Check/>No real payment in testing mode</span></div></aside>
     <main className="auth-main"><form className="auth-card" onSubmit={submit}><span className="pill">{mode==="signup"?"START FREE":"SIGN IN"}</span><h2>{mode==="signup"?"Create your BrewPoint account":"Open your workspace"}</h2>
       {mode==="signup"&&<label>Full name<input value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Your name" required/></label>}
+      {mode==="signup"&&<label>Beta access code<input value={form.accessCode} onChange={e=>setForm({...form,accessCode:e.target.value})} placeholder="Private test access code" required/></label>}
       <label>Email<input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="you@coffee.com" required/></label>
       <label>Password<input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="At least 8 characters" minLength="8" required/></label>
       {error&&<div className="form-error">{error}</div>}
