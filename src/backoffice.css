@@ -76,3 +76,13 @@
 .inline-form-title{font-size:11px;margin:0 0 2px;color:var(--navy)}
 .checkbox-row{display:flex!important;flex-direction:row!important;align-items:center;gap:8px!important;font-size:9px!important;font-weight:700!important}.checkbox-row input{width:auto!important;box-shadow:none!important}
 @media(max-width:700px){.category-add{min-width:100%;justify-content:stretch}.category-add input{max-width:none}.category-add .btn{white-space:nowrap}}
+
+.customer-history-head{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:14px 16px}
+.customer-history-head .metric{box-shadow:none;background:#faf8f4}
+.panel-footer{border-top:1px solid var(--line);padding:12px 16px;display:flex;justify-content:flex-end;gap:8px}
+.receipt-detail-meta{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.receipt-detail-meta>div{background:#faf8f4;border:1px solid var(--line);border-radius:9px;padding:9px}.receipt-detail-meta span,.receipt-detail-meta b{display:block}.receipt-detail-meta span{font-size:7px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:850}.receipt-detail-meta b{font-size:9px;margin-top:4px}
+.receipt-items{padding:5px 16px}.receipt-items>div{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eeeae4}.receipt-items b,.receipt-items small{display:block}.receipt-items b{font-size:9px}.receipt-items small{font-size:7px;color:var(--muted);margin-top:2px}.receipt-items strong{font-size:10px}
+.receipt-totals{margin-left:auto;width:min(360px,100%);padding:12px 16px}.receipt-totals>div{display:flex;justify-content:space-between;padding:5px 0;font-size:9px}.receipt-totals .grand{border-top:1px solid var(--line);margin-top:4px;padding-top:9px}.receipt-totals .grand strong{font-size:18px}
+@media(max-width:900px){.customer-history-head{grid-template-columns:1fr 1fr}.receipt-detail-meta{grid-template-columns:1fr 1fr}}
+@media(max-width:520px){.customer-history-head,.receipt-detail-meta{grid-template-columns:1fr}.panel-footer{flex-direction:column}.panel-footer .btn{width:100%}}
