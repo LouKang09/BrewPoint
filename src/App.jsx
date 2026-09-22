@@ -938,28 +938,172 @@ function Team({ws,reload,notify}) {
   </div>;
 }
 
-function PreviewLab({admin=false}) {
+function PreviewLab({admin=false,ws=null,data=null}) {
+  const [active,setActive]=useState(null);
+  const [poDraft,setPoDraft]=useState({supplier:"",ingredientId:"",qty:"1",cost:""});
+  const [poLines,setPoLines]=useState([]);
+  const [shift,setShift]=useState({opening:"1000",actual:""});
+  const [loyaltyCustomer,setLoyaltyCustomer]=useState("");
+  const [pointsRate,setPointsRate]=useState("1");
+  const [pickupDraft,setPickupDraft]=useState({productId:"",qty:"1",customer:"Walk-in"});
+  const [pickupQueue,setPickupQueue]=useState([]);
+  const [kitchenStages,setKitchenStages]=useState({});
+  const [adminTenantId,setAdminTenantId]=useState("");
+  const [flagState,setFlagState]=useState({});
+  const [announcement,setAnnouncement]=useState({target:"all",message:""});
+  const [announcementLog,setAnnouncementLog]=useState([]);
+  const [supportTenantId,setSupportTenantId]=useState("");
+  const [invoicePreview,setInvoicePreview]=useState(null);
+
   const tenantIdeas=[
-    {icon:Boxes,title:"Suppliers & purchase orders",tag:"HIGH VALUE",text:"Create suppliers, raise purchase orders, receive stock against a PO, and compare expected vs received quantities."},
-    {icon:WalletCards,title:"Cash drawer & shift closing",tag:"HIGH VALUE",text:"Opening cash, cashier shift, cash in/out, expected drawer, actual count, variance, and end-of-shift sign-off."},
-    {icon:Users,title:"Customer loyalty",tag:"GROWTH",text:"Points or stamps, reward rules, customer birthdays, visit frequency, and repeat-customer offers without mixing them with POS promos."},
-    {icon:ShoppingBag,title:"QR menu & pickup ordering",tag:"GROWTH",text:"Customer-facing menu with branch availability, pickup time, and order queue that feeds BrewPoint POS."},
-    {icon:ReceiptText,title:"Kitchen / barista display",tag:"OPERATIONS",text:"A preparation screen that groups paid orders by status: queued, preparing, ready, and claimed."},
-    {icon:BarChart3,title:"Forecasting & reorder suggestions",tag:"ANALYTICS",text:"Estimate ingredient days-on-hand from sales velocity and suggest reorder quantities before stock reaches the low-stock threshold."}
+    {id:"suppliers",icon:Boxes,title:"Suppliers & purchase orders",tag:"HIGH VALUE",text:"Build a purchase order, calculate its value, and preview receiving workflow."},
+    {id:"shift",icon:WalletCards,title:"Cash drawer & shift closing",tag:"HIGH VALUE",text:"Compare opening cash, expected drawer, actual cash, and cashier variance."},
+    {id:"loyalty",icon:Users,title:"Customer loyalty",tag:"GROWTH",text:"Preview points from a customer's recorded purchases without mixing loyalty with promos."},
+    {id:"pickup",icon:ShoppingBag,title:"QR menu & pickup ordering",tag:"GROWTH",text:"Create sample pickup orders and see how they would enter the POS queue."},
+    {id:"kitchen",icon:ReceiptText,title:"Kitchen / barista display",tag:"OPERATIONS",text:"Move paid orders through queued, preparing, ready, and claimed stages."},
+    {id:"forecast",icon:BarChart3,title:"Forecasting & reorder suggestions",tag:"ANALYTICS",text:"Use current ingredient levels to preview reorder quantities before stock runs low."}
   ];
   const adminIdeas=[
-    {icon:BarChart3,title:"Tenant health & usage",tag:"HIGH VALUE",text:"See active days, receipt volume, staff usage, branch usage, last login, and tenants that may need onboarding help."},
-    {icon:CreditCard,title:"Real billing gateway",tag:"REVENUE",text:"Automated subscription collection, invoices, failed-payment retries, grace periods, receipts, and plan upgrades."},
-    {icon:Sparkles,title:"Feature flags & beta rollout",tag:"CONTROL",text:"Enable a new feature for selected tenants first, then roll it out gradually without redeploying separate code."},
-    {icon:MessageCircle,title:"Announcements & in-app notices",tag:"SUPPORT",text:"Send maintenance notices, release notes, plan announcements, and targeted messages to selected tenants."},
-    {icon:ShieldCheck,title:"Admin impersonation with audit",tag:"SUPPORT",text:"Open a tenant workspace in read-only/support mode for troubleshooting, with a visible banner and full audit logging."},
-    {icon:CircleDollarSign,title:"Retention & revenue analytics",tag:"ANALYTICS",text:"Track trial conversion, MRR changes, cancellations, plan mix, support load, and tenant growth trends."}
+    {id:"health",icon:BarChart3,title:"Tenant health & usage",tag:"HIGH VALUE",text:"Preview which tenants are active, on trial, suspended, or need attention."},
+    {id:"gateway",icon:CreditCard,title:"Billing operations",tag:"REVENUE",text:"Preview invoice creation and card-on-file status without charging anything."},
+    {id:"flags",icon:Sparkles,title:"Feature flags & beta rollout",tag:"CONTROL",text:"Toggle proposed features for a selected tenant inside this preview session."},
+    {id:"announcements",icon:MessageCircle,title:"Announcements & in-app notices",tag:"SUPPORT",text:"Compose targeted notices and preview the announcement queue."},
+    {id:"impersonation",icon:ShieldCheck,title:"Read-only support mode",tag:"SUPPORT",text:"Preview a safe support view for a tenant without editing their data."},
+    {id:"retention",icon:CircleDollarSign,title:"Retention & revenue analytics",tag:"ANALYTICS",text:"Preview plan mix, trials, MRR, and tenants needing follow-up."}
   ];
   const ideas=admin?adminIdeas:tenantIdeas;
+  const tenants=data?.tenants||[];
+
+  const dayKey=value=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Manila",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(value));
+  const today=dayKey(new Date());
+  const todayCash=(ws?.sales||[]).filter(s=>s.status==="completed"&&s.payment_method==="cash"&&dayKey(s.created_at)===today).reduce((sum,s)=>sum+Number(s.total||0),0);
+  const expectedDrawer=Number(shift.opening||0)+todayCash;
+  const variance=shift.actual===""?null:Number(shift.actual||0)-expectedDrawer;
+
+  const selectedCustomer=(ws?.customers||[]).find(c=>String(c.id)===String(loyaltyCustomer));
+  const customerSpend=selectedCustomer?(ws?.sales||[]).filter(s=>s.status==="completed"&&String(s.customer_id||"")===String(selectedCustomer.id)).reduce((sum,s)=>sum+Number(s.total||0),0):0;
+  const projectedPoints=Math.floor(customerSpend/100)*Math.max(0,Number(pointsRate||0));
+
+  const addPoLine=()=>{
+    const ingredient=(ws?.ingredients||[]).find(i=>String(i.id)===String(poDraft.ingredientId));
+    const qty=Number(poDraft.qty||0),cost=Number(poDraft.cost||0);
+    if(!poDraft.supplier.trim()||!ingredient||qty<=0||cost<=0)return;
+    setPoLines(rows=>[...rows,{id:Date.now()+Math.random(),supplier:poDraft.supplier.trim(),ingredient:ingredient.name,uom:ingredient.uom,qty,cost,total:qty*cost}]);
+    setPoDraft(cur=>({...cur,qty:"1",cost:""}));
+  };
+
+  const addPickup=()=>{
+    const product=(ws?.products||[]).find(p=>String(p.id)===String(pickupDraft.productId));
+    const qty=Math.max(1,Number(pickupDraft.qty||1));
+    if(!product)return;
+    setPickupQueue(rows=>[{id:"WEB-"+String(Date.now()).slice(-6),customer:pickupDraft.customer.trim()||"Walk-in",product:product.name,qty,total:Number(product.price||0)*qty,status:"Waiting for POS"},...rows]);
+  };
+
+  const kitchenRows=(ws?.sales||[]).filter(s=>s.status==="completed").slice(0,6).map(s=>({id:String(s.id),reference:s.reference_no,total:s.total}));  
+  if(!kitchenRows.length)kitchenRows.push({id:"demo",reference:"DEMO-001",total:143});
+  const stages=["Queued","Preparing","Ready","Claimed"];
+  const advanceKitchen=id=>{
+    setKitchenStages(cur=>{
+      const current=cur[id]||"Queued";
+      const next=stages[Math.min(stages.indexOf(current)+1,stages.length-1)];
+      return {...cur,[id]:next};
+    });
+  };
+
+  const selectedAdminTenant=tenants.find(t=>String(t.id)===String(adminTenantId));
+  const generateInvoice=()=>{
+    if(!selectedAdminTenant)return;
+    const amount=plans[selectedAdminTenant.plan]?.price||0;
+    setInvoicePreview({tenant:selectedAdminTenant.name,plan:plans[selectedAdminTenant.plan]?.name||selectedAdminTenant.plan,amount,reference:"INV-PREVIEW-"+String(Date.now()).slice(-6)});
+  };
+  const toggleFlag=(tenantId,key)=>setFlagState(cur=>({...cur,[tenantId]:{...(cur[tenantId]||{}),[key]:!(cur[tenantId]?.[key])}}));
+  const queueAnnouncement=()=>{
+    if(announcement.message.trim().length<3)return;
+    setAnnouncementLog(rows=>[{id:Date.now(),target:announcement.target,message:announcement.message.trim()},...rows]);
+    setAnnouncement(cur=>({...cur,message:""}));
+  };
+
+  const renderTenantPreview=()=>{
+    if(active==="suppliers")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Purchase order builder</h3><p>Interactive preview only — nothing is written to inventory.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-form-grid"><label>Supplier<input value={poDraft.supplier} onChange={e=>setPoDraft({...poDraft,supplier:e.target.value})} placeholder="e.g. Cebu Coffee Supply"/></label><label>Ingredient<select value={poDraft.ingredientId} onChange={e=>setPoDraft({...poDraft,ingredientId:e.target.value})}><option value="">Select ingredient</option>{(ws?.ingredients||[]).map(i=><option key={i.id} value={i.id}>{i.name} · {i.uom}</option>)}</select></label><label>Qty<input type="number" min="0.001" value={poDraft.qty} onChange={e=>setPoDraft({...poDraft,qty:e.target.value})}/></label><label>Unit cost<input type="number" min="0.01" value={poDraft.cost} onChange={e=>setPoDraft({...poDraft,cost:e.target.value})}/></label><button className="btn primary" disabled={!poDraft.supplier.trim()||!poDraft.ingredientId||Number(poDraft.qty)<=0||Number(poDraft.cost)<=0} onClick={addPoLine}>Add PO line</button></div>
+      <div className="preview-list">{poLines.map(r=><div key={r.id}><span><b>{r.ingredient}</b><small>{r.supplier} · {r.qty} {r.uom} × {money(r.cost)}</small></span><strong>{money(r.total)}</strong></div>)}{!poLines.length&&<Empty Icon={Boxes} text="Build a few PO lines to test the workflow."/>}</div>
+      {!!poLines.length&&<div className="preview-total"><span>Preview PO total</span><strong>{money(poLines.reduce((s,r)=>s+r.total,0))}</strong></div>}
+    </div>;
+
+    if(active==="shift")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Cash drawer closing</h3><p>Uses today's loaded Cash receipts to calculate a sample variance.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-metrics"><Metric label="Opening cash" value={money(shift.opening)} sub="Editable below"/><Metric label="Cash sales" value={money(todayCash)} sub="Today · loaded receipts"/><Metric label="Expected drawer" value={money(expectedDrawer)} sub="Opening + cash sales"/><Metric label="Variance" value={variance===null?"—":money(variance)} sub={variance===null?"Enter actual drawer":variance===0?"Balanced":variance>0?"Over":"Short"}/></div>
+      <div className="preview-form-grid two"><label>Opening cash<input type="number" value={shift.opening} onChange={e=>setShift({...shift,opening:e.target.value})}/></label><label>Actual counted cash<input type="number" value={shift.actual} onChange={e=>setShift({...shift,actual:e.target.value})} placeholder="Count at close"/></label></div>
+    </div>;
+
+    if(active==="loyalty")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Customer loyalty calculator</h3><p>Preview points using recorded customer-linked sales currently loaded in the workspace.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-form-grid two"><label>Customer<select value={loyaltyCustomer} onChange={e=>setLoyaltyCustomer(e.target.value)}><option value="">Select customer</option>{(ws?.customers||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Points per ₱100<input type="number" min="0" step="1" value={pointsRate} onChange={e=>setPointsRate(e.target.value)}/></label></div>
+      <div className="preview-metrics"><Metric label="Customer" value={selectedCustomer?.name||"—"} sub="Selected loyalty member"/><Metric label="Loaded spend" value={money(customerSpend)} sub="Completed linked sales"/><Metric label="Projected points" value={projectedPoints} sub="Preview balance"/><Metric label="Reward example" value={projectedPoints>=10?"Eligible":"Not yet"} sub="Example: reward at 10 points"/></div>
+    </div>;
+
+    if(active==="pickup")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>QR pickup order simulator</h3><p>Create sample customer orders and see the queue they would send to POS.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-form-grid"><label>Customer<input value={pickupDraft.customer} onChange={e=>setPickupDraft({...pickupDraft,customer:e.target.value})}/></label><label>Product<select value={pickupDraft.productId} onChange={e=>setPickupDraft({...pickupDraft,productId:e.target.value})}><option value="">Select product</option>{(ws?.products||[]).filter(p=>p.is_active).map(p=><option key={p.id} value={p.id}>{p.name} · {money(p.price)}</option>)}</select></label><label>Qty<input type="number" min="1" step="1" value={pickupDraft.qty} onChange={e=>setPickupDraft({...pickupDraft,qty:e.target.value})}/></label><button className="btn primary" disabled={!pickupDraft.productId} onClick={addPickup}>Send sample order</button></div>
+      <div className="preview-list">{pickupQueue.map(o=><div key={o.id}><span><b>{o.id} · {o.customer}</b><small>{o.qty}× {o.product} · {o.status}</small></span><strong>{money(o.total)}</strong></div>)}{!pickupQueue.length&&<Empty Icon={ShoppingBag} text="No sample web orders yet."/>}</div>
+    </div>;
+
+    if(active==="kitchen")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Kitchen / barista display</h3><p>Advance an order through preparation stages. Status changes exist only in this preview.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="kds-grid">{kitchenRows.map(o=>{const stage=kitchenStages[o.id]||"Queued";return <article key={o.id}><span className={"kds-status "+stage.toLowerCase()}>{stage}</span><h4>{o.reference}</h4><p>{money(o.total)}</p><button className="btn secondary wide" disabled={stage==="Claimed"} onClick={()=>advanceKitchen(o.id)}>{stage==="Claimed"?"Completed":"Move to "+stages[Math.min(stages.indexOf(stage)+1,stages.length-1)]}</button></article>})}</div>
+    </div>;
+
+    if(active==="forecast")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Reorder suggestions</h3><p>Simple preview formula: target stock = 2× low-stock threshold.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="table-scroll"><table className="report-table"><thead><tr><th>Ingredient</th><th>Stock</th><th>Low level</th><th>Suggested reorder</th><th>Status</th></tr></thead><tbody>{[...(ws?.ingredients||[])].sort((x,y)=>Number(x.stock_qty)-Number(y.stock_qty)).slice(0,12).map(i=>{const stock=Number(i.stock_qty||0),low=Number(i.low_stock_threshold||0),reorder=Math.max(0,low*2-stock);return <tr key={i.id}><td><b>{i.name}</b></td><td>{stock.toLocaleString()} {i.uom}</td><td>{low.toLocaleString()}</td><td><b>{reorder?reorder.toLocaleString()+" "+i.uom:"—"}</b></td><td><span className={"inventory-status "+(stock<=0?"out":stock<=low?"low":"healthy")}>{stock<=0?"Out":stock<=low?"Low":"Healthy"}</span></td></tr>})}</tbody></table></div>
+    </div>;
+    return null;
+  };
+
+  const renderAdminPreview=()=>{
+    if(active==="health")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Tenant health monitor</h3><p>Live tenant data, preview health labels only.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="table-scroll"><table className="report-table"><thead><tr><th>Tenant</th><th>Plan</th><th>Status</th><th>Branches</th><th>Staff</th><th>Month sales</th><th>Health</th></tr></thead><tbody>{tenants.slice(0,20).map(t=>{const attention=t.is_suspended||["past_due","cancelled","suspended"].includes(t.subscription_status);return <tr key={t.id}><td><b>{t.name}</b><small>{t.owner_email||"—"}</small></td><td>{plans[t.plan]?.name||t.plan}</td><td>{t.subscription_status}</td><td>{t.branches}</td><td>{t.members}</td><td>{money(t.month_sales)}</td><td><span className={"inventory-status "+(attention?"out":"healthy")}>{attention?"Needs attention":"Healthy"}</span></td></tr>})}</tbody></table></div>
+    </div>;
+
+    if(active==="gateway")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Billing operations preview</h3><p>Creates a local invoice preview only. No payment is processed.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-form-grid two"><label>Tenant<select value={adminTenantId} onChange={e=>{setAdminTenantId(e.target.value);setInvoicePreview(null)}}><option value="">Select tenant</option>{tenants.map(t=><option key={t.id} value={t.id}>{t.name} · {plans[t.plan]?.name||t.plan}</option>)}</select></label><div className="preview-card-status">{selectedAdminTenant?<><b>{selectedAdminTenant.has_billing_card?"Card on file":"No card registered"}</b><span>{selectedAdminTenant.subscription_status}</span></>:<span>Select a tenant</span>}</div><button className="btn primary" disabled={!selectedAdminTenant} onClick={generateInvoice}>Generate preview invoice</button></div>
+      {invoicePreview&&<div className="preview-invoice"><span>{invoicePreview.reference}</span><b>{invoicePreview.tenant}</b><small>{invoicePreview.plan}</small><strong>{money(invoicePreview.amount)}</strong></div>}
+    </div>;
+
+    if(active==="flags")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Feature flag simulator</h3><p>Toggle flags for one tenant in this browser session only.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-form-grid two"><label>Tenant<select value={adminTenantId} onChange={e=>setAdminTenantId(e.target.value)}><option value="">Select tenant</option>{tenants.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>
+      {adminTenantId?<div className="flag-list">{[["kds","Kitchen display"],["loyalty","Customer loyalty"],["forecast","Smart reorder"],["pickup","QR pickup ordering"]].map(([key,label])=><label key={key}><input type="checkbox" checked={Boolean(flagState[adminTenantId]?.[key])} onChange={()=>toggleFlag(adminTenantId,key)}/><span><b>{label}</b><small>{flagState[adminTenantId]?.[key]?"Enabled in preview":"Off"}</small></span></label>)}</div>:<Empty Icon={Sparkles} text="Select a tenant to test feature flags."/>}
+    </div>;
+
+    if(active==="announcements")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Announcement composer</h3><p>Preview targeting and message queue. Nothing is sent.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-form-grid"><label>Audience<select value={announcement.target} onChange={e=>setAnnouncement({...announcement,target:e.target.value})}><option value="all">All tenants</option>{tenants.map(t=><option key={t.id} value={String(t.id)}>{t.name}</option>)}</select></label><label className="span-two">Message<textarea value={announcement.message} onChange={e=>setAnnouncement({...announcement,message:e.target.value})} placeholder="Maintenance notice, release note, billing reminder…"/></label><button className="btn primary" disabled={announcement.message.trim().length<3} onClick={queueAnnouncement}>Queue preview</button></div>
+      <div className="preview-list">{announcementLog.map(x=><div key={x.id}><span><b>{x.target==="all"?"All tenants":tenants.find(t=>String(t.id)===x.target)?.name||"Tenant"}</b><small>{x.message}</small></span><span className="badge trialing">Preview</span></div>)}{!announcementLog.length&&<Empty Icon={MessageCircle} text="No preview announcements queued."/>}</div>
+    </div>;
+
+    if(active==="impersonation")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Read-only support mode</h3><p>This preview intentionally does not authenticate as or mutate a tenant.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-form-grid two"><label>Tenant<select value={supportTenantId} onChange={e=>setSupportTenantId(e.target.value)}><option value="">Select tenant</option>{tenants.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>
+      {supportTenantId?<div className="support-mode-preview"><ShieldCheck/><div><b>READ-ONLY SUPPORT MODE</b><span>You are previewing support access for {tenants.find(t=>String(t.id)===String(supportTenantId))?.name}. A production implementation would require explicit audit logging and block all writes.</span></div></div>:<Empty Icon={ShieldCheck} text="Select a tenant to preview the support banner."/>}
+    </div>;
+
+    if(active==="retention")return <div className="preview-workspace">
+      <div className="preview-workspace-head"><div><h3>Retention & revenue snapshot</h3><p>Uses current platform totals already available to BrewPoint Admin.</p></div><button className="btn secondary tiny" onClick={()=>setActive(null)}>Close</button></div>
+      <div className="preview-metrics"><Metric label="MRR" value={money(data?.summary?.monthlyRecurringRevenue||0)} sub="Active plan value"/><Metric label="Trials" value={data?.summary?.trialTenants||0} sub="Conversion pipeline"/><Metric label="Needs attention" value={data?.summary?.needsAttention||0} sub="Past due / suspended / cancelled"/><Metric label="Active tenants" value={data?.summary?.activeTenants||0} sub="Paying or active"/></div>
+      <div className="plan-mix-preview">{Object.entries(data?.planBreakdown||{}).map(([key,value])=><div key={key}><span>{plans[key]?.name||key}</span><b>{value}</b></div>)}</div>
+    </div>;
+    return null;
+  };
+
   return <div className="stack preview-lab">
-    <section className="section-bar"><div><span className="pill">PREVIEW ONLY</span><h2>{admin?"BrewPoint platform roadmap":"Tenant feature lab"}</h2><p>These concepts are intentionally non-functional for now. They let us judge the workflow and usefulness before adding database logic or changing live operations.</p></div></section>
-    <div className="preview-grid">{ideas.map(({icon:Icon,title,tag,text})=><article className="preview-card" key={title}><div className="preview-card-top"><span className="preview-icon"><Icon/></span><span className="preview-tag">{tag}</span></div><h3>{title}</h3><p>{text}</p><footer><span>Preview</span><small>Not active yet</small></footer></article>)}</div>
-    <div className="info-note"><b>Recommended first candidates:</b> {admin?"Tenant health & usage, real billing, and feature flags give the landlord console the strongest operational value.":"Cash drawer/shift closing, suppliers/purchase orders, and a kitchen/barista display are the strongest next operational additions for cafés."}</div>
+    <section className="section-bar"><div><span className="pill">INTERACTIVE PREVIEW</span><h2>{admin?"BrewPoint platform lab":"Tenant feature lab"}</h2><p>Open any concept below and test the proposed workflow. Preview actions are temporary and do not alter live BrewPoint records.</p></div></section>
+    <div className="preview-grid">{ideas.map(({id,icon:Icon,title,tag,text})=><article className={"preview-card "+(active===id?"active":"")} key={id}><div className="preview-card-top"><span className="preview-icon"><Icon/></span><span className="preview-tag">{tag}</span></div><h3>{title}</h3><p>{text}</p><footer><button className="btn secondary small" onClick={()=>setActive(id)}>Open preview</button><small>{active===id?"Open below":"Safe demo"}</small></footer></article>)}</div>
+    {admin?renderAdminPreview():renderTenantPreview()}
+    <div className="info-note"><b>Preview rule:</b> The lab is now interactive, but its actions are intentionally session-only until you approve a feature for full database implementation.</div>
   </div>;
 }
 
