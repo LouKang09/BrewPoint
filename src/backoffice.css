@@ -266,3 +266,58 @@
 :root[data-theme="dark"] .category-add input,:root[data-theme="dark"] .category-manager input{background:#102235;color:#eef4f8;border-color:#30475d}
 :root[data-theme="dark"] .sales-kpis{background:#102235;border-color:#30475d}
 :root[data-theme="dark"] .report-tabs{background:#16283a!important}
+
+/* 2026-09-22 second refinement: dark-mode consistency, reports, previews */
+.best-sellers-card{background:var(--paper);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
+.best-seller-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0}
+.best-seller-grid>article{position:relative;padding:16px;border-right:1px solid var(--line);min-height:112px;display:flex;flex-direction:column;justify-content:flex-end}
+.best-seller-grid>article:last-child{border-right:0}.best-rank{position:absolute;top:11px;left:13px;font-size:9px;font-weight:900;color:var(--orange);background:#fff2df;border-radius:999px;padding:4px 7px}
+.best-seller-grid b,.best-seller-grid small{display:block}.best-seller-grid b{font-size:11px}.best-seller-grid small{font-size:8px;color:var(--muted);margin:3px 0 8px}.best-seller-grid strong{font-size:13px;color:var(--orange)}
+
+.inventory-status{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:8px;font-weight:850}.inventory-status.healthy{background:#e7f6ee;color:#277153}.inventory-status.low{background:#fff0d2;color:#8b5a13}.inventory-status.out{background:#fde7e7;color:#9d3d3d}
+.inventory-report-table{min-width:1050px}
+
+.preview-lab .section-bar{align-items:flex-start}.preview-lab .section-bar .pill{display:inline-flex;margin-bottom:8px}
+.preview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.preview-card{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:210px}
+.preview-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px}.preview-icon{width:38px;height:38px;border-radius:11px;background:#fff2df;color:var(--orange);display:grid;place-items:center}.preview-icon svg{width:19px;height:19px}
+.preview-tag{font-size:7px;font-weight:900;letter-spacing:.09em;color:#875514;background:#fff4e3;border:1px solid #efd0a4;border-radius:999px;padding:5px 7px}.preview-card h3{font-size:15px;margin:15px 0 7px}.preview-card p{font-size:9px;line-height:1.6;color:var(--muted);margin:0}.preview-card footer{margin-top:auto;padding:13px 0 0;border:0;background:transparent;display:flex;justify-content:space-between}.preview-card footer span{font-size:8px;font-weight:900;color:var(--orange)}.preview-card footer small{font-size:8px;color:var(--muted)}
+
+.trial-plan-lock,.trial-plan-message{border:1px solid #f0cf9f;background:#fff4e3;border-radius:11px;padding:11px 12px}.trial-plan-lock b,.trial-plan-lock span,.trial-plan-message b,.trial-plan-message span{display:block}.trial-plan-lock b,.trial-plan-message b{font-size:10px}.trial-plan-lock span,.trial-plan-message span{font-size:8px;line-height:1.5;color:#795525;margin-top:3px}
+.trial-plan-message{display:flex;gap:10px;align-items:flex-start}.trial-plan-message svg{color:var(--orange);flex:none}.billing-plan-card.trial-locked{opacity:.62}.locked-plan-label{position:absolute;right:17px;top:17px;font-size:7px;font-weight:900;letter-spacing:.08em;background:#243d54;color:#cbd9e4;border-radius:999px;padding:5px 7px}
+
+/* Dark screenshot fixes */
+:root[data-theme="dark"] .promo-builder-total{background:#102235;border:1px solid #30475d;color:#eef4f8}
+:root[data-theme="dark"] .promo-builder-total span{color:#a9bac8}
+:root[data-theme="dark"] .promo-cart-line{background:#102235!important;border-color:#30475d!important;color:#eef4f8}
+:root[data-theme="dark"] .promo-cart-line small{color:#a9bac8}
+:root[data-theme="dark"] .remove-promo{color:#ff9d92}
+:root[data-theme="dark"] .info-note{background:#342a1d;border-color:#65502d;color:#f3d5a4}
+:root[data-theme="dark"] .billing-feature-list li{color:#b9c8d4}
+:root[data-theme="dark"] .pricing-card>p{color:#a9bac8}
+:root[data-theme="dark"] .product i,
+:root[data-theme="dark"] .promo-product i{background:#27445d;color:#ff9b22;border:1px solid #3a5b75}
+:root[data-theme="dark"] .product:hover i,
+:root[data-theme="dark"] .promo-product:hover i{background:#31516d}
+:root[data-theme="dark"] .best-sellers-card,
+:root[data-theme="dark"] .best-seller-grid>article,
+:root[data-theme="dark"] .preview-card{background:#16283a;color:#eef4f8;border-color:#30475d}
+:root[data-theme="dark"] .best-rank,
+:root[data-theme="dark"] .preview-icon,
+:root[data-theme="dark"] .preview-tag{background:#3a2d1c;color:#ffc477;border-color:#674b27}
+:root[data-theme="dark"] .inventory-status.healthy{background:#173a2e;color:#9ce1bf}:root[data-theme="dark"] .inventory-status.low{background:#3d311d;color:#f3c77a}:root[data-theme="dark"] .inventory-status.out{background:#3d2529;color:#ffaaa9}
+:root[data-theme="dark"] .trial-plan-lock,
+:root[data-theme="dark"] .trial-plan-message{background:#342a1d;border-color:#65502d;color:#f3d5a4}
+:root[data-theme="dark"] .trial-plan-lock span,
+:root[data-theme="dark"] .trial-plan-message span{color:#d2b98f}
+:root[data-theme="dark"] .billing-hero>strong small{color:#a9bac8}
+:root[data-theme="dark"] .section-bar p,
+:root[data-theme="dark"] .billing-hero p{color:#a9bac8}
+:root[data-theme="dark"] .report-filter-actions select:disabled{opacity:.48;background:#0e1e2e}
+:root[data-theme="dark"] .gcash-settings input[type="file"]{background:#102235;color:#dce7ef;border-color:#385064}
+:root[data-theme="dark"] input[type="file"]::file-selector-button{background:#27445d;color:#eef4f8;border:0;border-radius:6px;padding:6px 8px;margin-right:8px;cursor:pointer}
+:root[data-theme="dark"] .gcash-preview{border-color:#385064}
+:root[data-theme="dark"] .empty{color:#8fa4b6!important}
+
+@media(max-width:1100px){.best-seller-grid{grid-template-columns:repeat(3,1fr)}.best-seller-grid>article{border-bottom:1px solid var(--line)}.preview-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.best-seller-grid{grid-template-columns:1fr 1fr}.preview-grid{grid-template-columns:1fr}}
