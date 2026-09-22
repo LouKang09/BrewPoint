@@ -6,8 +6,8 @@ import {
   Search, ShieldCheck, ShoppingBag, Store, Tags, Trash2, Users, WalletCards
 } from "lucide-react";
 
-const ICON = "https://593bb19f-d751-4336-a840-eafc025d8515.sandbox.floot.app/_cdn/static/3e83a006-a759-4895-83c9-bd0908d4009f-ChatGPT-Image-Sep-22-2026-12_20_07-PM.png";
-const LOGO = "https://593bb19f-d751-4336-a840-eafc025d8515.sandbox.floot.app/_cdn/static/f9e8c907-22bb-41e5-b2d5-8de22fcfed84-ChatGPT-Image-Sep-22-2026-12_20_17-PM.png";
+const ICON = "/brewpoint-icon.svg";
+const LOGO = "/brewpoint-logo.svg";
 
 const plans = {
   starter: { name:"Starter", price:799, branches:1, staff:3, features:["1 branch","3 staff accounts","POS + Cash/GCash","Products & recipes","Ingredient deduction","Inventory alerts","Basic costing","Daily/weekly/monthly reports","Customers & basic promos"] },
