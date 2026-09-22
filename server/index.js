@@ -993,7 +993,7 @@ app.delete("/api/customers/:id", auth, requireContext, allow("owner","admin","ma
   res.json({ok:true});
 });
 
-app.post("/api/promos", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
+app.post("/api/promos", auth, requireContext, allow("owner","admin"), async(req,res)=>{
   const name=String(req.body.name||"").trim();
   const type=["set_price","fixed_discount","percentage"].includes(req.body.promoType)?req.body.promoType:"fixed_discount";
   const value=Number(req.body.value);
@@ -1023,7 +1023,7 @@ app.post("/api/promos", auth, requireContext, allow("owner","admin","manager"), 
   res.json({id:String(rows[0].id)});
 });
 
-app.delete("/api/promos/:id", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
+app.delete("/api/promos/:id", auth, requireContext, allow("owner","admin"), async(req,res)=>{
   const promoId=String(req.params.id||"");
   const {rows}=await pool.query("DELETE FROM promos WHERE id=$1 AND business_id=$2 RETURNING id,name",[promoId,req.context.business_id]);
   if(!rows[0])return res.status(404).json({message:"Promo not found."});
