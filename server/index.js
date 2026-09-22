@@ -799,9 +799,46 @@ app.post("/api/expenses", auth, requireContext, allow("owner","admin","manager")
 app.post("/api/customers", auth, requireContext, async(req,res)=>{
   const name=String(req.body.name||"").trim();
   if(name.length<2)return res.status(400).json({message:"Customer name is required."});
-  const {rows}=await pool.query(`INSERT INTO customers(business_id,name,phone,email,notes) VALUES($1,$2,$3,$4,$5) RETURNING id`,[req.context.business_id,name,String(req.body.phone||"").trim()||null,String(req.body.email||"").trim().toLowerCase()||null,String(req.body.notes||"").trim()||null]);
+  const phone=String(req.body.phone||"").trim()||null;
+  const email=String(req.body.email||"").trim().toLowerCase()||null;
+  const notes=String(req.body.notes||"").trim()||null;
+  if(req.body.id){
+    const {rows}=await pool.query(`UPDATE customers SET name=$1,phone=$2,email=$3,notes=$4 WHERE id=$5 AND business_id=$6 RETURNING id`,[name,phone,email,notes,String(req.body.id),req.context.business_id]);
+    if(!rows[0])return res.status(404).json({message:"Customer not found."});
+    await audit(pool,req.context.business_id,req.user.id,"CUSTOMER_UPDATED","customer",rows[0].id,name);
+    return res.json({id:String(rows[0].id)});
+  }
+  const {rows}=await pool.query(`INSERT INTO customers(business_id,name,phone,email,notes) VALUES($1,$2,$3,$4,$5) RETURNING id`,[req.context.business_id,name,phone,email,notes]);
   await audit(pool,req.context.business_id,req.user.id,"CUSTOMER_CREATED","customer",rows[0].id,name);
   res.json({id:String(rows[0].id)});
+});
+
+app.get("/api/customers/:id/history", auth, requireContext, async(req,res)=>{
+  const customerId=String(req.params.id||"");
+  const customer=await pool.query("SELECT * FROM customers WHERE id=$1 AND business_id=$2",[customerId,req.context.business_id]);
+  if(!customer.rowCount)return res.status(404).json({message:"Customer not found."});
+  const {rows}=await pool.query(`SELECT s.id,s.reference_no,s.total,s.discount,s.payment_method,s.status,s.created_at,b.name AS branch_name,u.display_name AS cashier_name
+    FROM sales s JOIN branches b ON b.id=s.branch_id LEFT JOIN users u ON u.id=s.cashier_user_id
+    WHERE s.customer_id=$1 AND s.business_id=$2 ORDER BY s.created_at DESC LIMIT 100`,[customerId,req.context.business_id]);
+  const completed=rows.filter(x=>x.status==="completed");
+  res.json({
+    customer:customer.rows[0],
+    summary:{
+      visits:completed.length,
+      lifetimeSpend:completed.reduce((sum,x)=>sum+Number(x.total),0),
+      lastVisit:completed[0]?.created_at||null,
+      averageTicket:completed.length?completed.reduce((sum,x)=>sum+Number(x.total),0)/completed.length:0
+    },
+    sales:rows
+  });
+});
+
+app.delete("/api/customers/:id", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
+  const customerId=String(req.params.id||"");
+  const {rows}=await pool.query("DELETE FROM customers WHERE id=$1 AND business_id=$2 RETURNING id,name",[customerId,req.context.business_id]);
+  if(!rows[0])return res.status(404).json({message:"Customer not found."});
+  await audit(pool,req.context.business_id,req.user.id,"CUSTOMER_DELETED","customer",customerId,rows[0].name);
+  res.json({ok:true});
 });
 
 app.post("/api/promos", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
@@ -1007,6 +1044,18 @@ app.get("/api/reports", auth, requireContext, async(req,res)=>{
     console.error(error);
     res.status(500).json({message:"Unable to build report."});
   }
+});
+
+app.get("/api/sales/:id", auth, requireContext, async(req,res)=>{
+  const saleId=String(req.params.id||"");
+  const sale=await pool.query(`SELECT s.*,b.name AS branch_name,u.display_name AS cashier_name,c.name AS customer_name,c.phone AS customer_phone
+    FROM sales s JOIN branches b ON b.id=s.branch_id
+    LEFT JOIN users u ON u.id=s.cashier_user_id
+    LEFT JOIN customers c ON c.id=s.customer_id
+    WHERE s.id=$1 AND s.business_id=$2`,[saleId,req.context.business_id]);
+  if(!sale.rowCount)return res.status(404).json({message:"Receipt not found."});
+  const items=await pool.query("SELECT id,product_id,product_name,qty,unit_price,line_total FROM sale_items WHERE sale_id=$1 ORDER BY id",[saleId]);
+  res.json({sale:sale.rows[0],items:items.rows});
 });
 
 app.post("/api/sales/void", auth, requireContext, allow("owner","admin","manager"), async(req,res)=>{
