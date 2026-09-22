@@ -65,18 +65,91 @@ function ThemeControl({theme,setTheme,compact=false}){
 
 function GuideTour({role,onSectionChange,onClose,admin=false}){
   const tenantSteps={
-    owner:[["dashboard","Dashboard","Review sales, profit, discounts, and trends."],["pos","Point of Sale","Take Cash or GCash sales, apply Senior/PWD discounts, or build registered promo bundles."],["inventory","Inventory","Replenish ingredients and review automatic recipe deductions."],["products","Products & Recipes","Maintain categories, recipes, costing, and gross margins."],["customers","Customers & Promos","Manage customers, purchase history, and promo rules."],["reports","Reports","Review and print reports or export CSV."],["team","Team & Branches","Create staff, assign a branch, and configure the GCash QR."],["billing","Plan & Billing","Review plan limits and inclusions."]],
-    admin:[["dashboard","Dashboard","Review the café's performance."],["pos","Point of Sale","Process sales and payments."],["inventory","Inventory","Manage stock and movements."],["products","Products & Recipes","Edit menu, recipes, and costing."],["customers","Customers & Promos","Manage customer and promo records."],["reports","Reports","Review, print, and export reports."],["team","Team & Branches","Manage staff assignments and GCash QR."],["billing","Plan & Billing","Review subscription options."]],
-    manager:[["dashboard","Dashboard","See operational performance."],["pos","Point of Sale","Process sales for your assigned branch."],["inventory","Inventory","Monitor and adjust inventory."],["products","Products & Recipes","Maintain recipes and costing."],["customers","Customers & Promos","Work with customers and promos."],["expenses","Expenses","Record operating expenses."],["reports","Reports","Review your allowed reporting views."]],
-    inventory:[["dashboard","Dashboard","See the café snapshot."],["inventory","Inventory","This is your main workspace for stock, waste, replenishment, and history."]],
-    cashier:[["dashboard","Dashboard","See the basic store snapshot."],["pos","Point of Sale","Your POS is locked to your assigned branch. Use Cash, GCash QR, Senior/PWD, or registered promos."],["customers","Customers","Save customer information when needed."]]
+    owner:[
+      {section:"dashboard",target:'[data-guide="nav-dashboard"]',title:"Dashboard",body:"Use this first. It summarizes gross sales, discounts, net sales, refunds/voids, COGS, and gross profit. Change store, employee, or date filters before comparing performance."},
+      {section:"pos",target:'[data-guide="pos-catalog"]',title:"POS menu",body:"Choose the selling branch, then add products by category. If a branch is under maintenance, every sale control is intentionally locked."},
+      {section:"pos",target:'[data-guide="pos-categories"]',title:"Promos live here",body:"Promos are a menu category, not a checkout discount. Opening one forces the cashier to choose only the products you authorized in the promo setup."},
+      {section:"pos",target:'[data-guide="pos-discount"]',title:"Senior/PWD",body:"Senior and PWD apply 20% and require an ID/reference. They cannot be combined with a promo; BrewPoint enforces that in the screen and server."},
+      {section:"products",target:'[data-guide="nav-products"]',title:"Products & recipes",body:"Set selling price, recipe ingredients, required quantities, and cost. Recipe quantities drive stock deductions and gross-margin calculations."},
+      {section:"customers",target:'[data-guide="promo-editor"]',title:"Promo permissions",body:"Define the promo price, required categories, quantity per category, and the exact products cashiers are allowed to choose."},
+      {section:"reports",target:'[data-guide="nav-reports"]',title:"Reports",body:"Filter by period, branch, or employee. Open receipts, print the current report, or export the selected report as CSV."},
+      {section:"team",target:'[data-guide="staff-form"]',title:"Staff assignment",body:"Each staff account needs a role and branch. Assigned staff can only operate the POS for that branch."},
+      {section:"team",target:'[data-guide="branch-maintenance"]',title:"Branch maintenance",body:"Use Maintenance before repairs, network work, or temporary closure. Assigned cashiers will see Under Maintenance and cannot process a sale until you reopen it."},
+      {section:"team",target:'[data-guide="gcash-settings"]',title:"GCash QR",body:"Upload the branch/company GCash QR and account details. At checkout the customer scans it, then the cashier records the GCash reference."}
+    ],
+    admin:[
+      {section:"dashboard",target:'[data-guide="nav-dashboard"]',title:"Dashboard",body:"Monitor sales, discounts, COGS, and gross profit. Use filters before comparing branches or employees."},
+      {section:"pos",target:'[data-guide="pos-root"]',title:"POS",body:"Build orders, select registered promo bundles, apply required Senior/PWD IDs, and complete Cash or GCash payments."},
+      {section:"inventory",target:'[data-guide="nav-inventory"]',title:"Inventory",body:"Replenish, adjust, or record waste. Sale deductions come automatically from product recipes."},
+      {section:"products",target:'[data-guide="nav-products"]',title:"Recipes & costing",body:"Maintain menu prices and ingredient quantities so stock and COGS stay accurate."},
+      {section:"customers",target:'[data-guide="promo-editor"]',title:"Promo control",body:"Tenant Admin can decide the exact products allowed inside each promo combination."},
+      {section:"reports",target:'[data-guide="nav-reports"]',title:"Reports",body:"Review receipts and performance, then print or export the active report."},
+      {section:"team",target:'[data-guide="branch-maintenance"]',title:"Branches",body:"Assign staff, rename branches, and temporarily lock POS with Under Maintenance when needed."}
+    ],
+    manager:[
+      {section:"dashboard",target:'[data-guide="nav-dashboard"]',title:"Operational dashboard",body:"Use branch and employee results to monitor the day without changing subscription or platform settings."},
+      {section:"pos",target:'[data-guide="pos-root"]',title:"Branch POS",body:"Your assigned branch is enforced. Promo rules and Senior/PWD validation cannot be bypassed from the cashier screen."},
+      {section:"inventory",target:'[data-guide="nav-inventory"]',title:"Stock operations",body:"Use adjustments only for real replenishment, waste, or corrections because every movement is retained in history."},
+      {section:"reports",target:'[data-guide="nav-reports"]',title:"Reports",body:"Use period and employee filters to review sales and print the report you are viewing."}
+    ],
+    inventory:[
+      {section:"dashboard",target:'[data-guide="nav-dashboard"]',title:"Inventory snapshot",body:"Check low-stock counts and inventory value before opening the stock workspace."},
+      {section:"inventory",target:'[data-guide="nav-inventory"]',title:"Inventory workspace",body:"Replenish, adjust, or record waste here. Automatic sale deductions appear in movement history for audit."}
+    ],
+    cashier:[
+      {section:"pos",target:'[data-guide="pos-catalog"]',title:"Your branch POS",body:"The branch shown here is your assigned store. You cannot switch to another branch, and maintenance will lock sales completely."},
+      {section:"pos",target:'[data-guide="pos-categories"]',title:"Products and promos",body:"Regular products are grouped by category. Promos have their own category and only show product choices approved by Owner/Admin."},
+      {section:"pos",target:'[data-guide="pos-discount"]',title:"Customer and Senior/PWD",body:"Select a customer if needed. Senior/PWD requires the ID/reference and cannot be used together with a promo."},
+      {section:"customers",target:'[data-guide="customer-form"]',title:"Add a customer",body:"Cashiers may add or edit customer details and review history. Promo setup is hidden because it is an Owner/Admin responsibility."}
+    ]
   };
-  const adminSteps=[["overview","Platform Overview","Monitor all BrewPoint tenants and subscription health."],["tenants","Tenants","Manage tenant status and access."],["trials","Trials","Extend or convert trial accounts."],["subscriptions","Subscriptions","Manage plans and subscription lifecycle."],["support","Support Tickets","Reply to questions submitted from the public BrewPoint chatbot."],["security","Audit & Security","Review platform activity and security status."]];
+  const adminSteps=[
+    {section:"overview",target:'[data-guide="admin-overview"]',title:"Platform overview",body:"This is landlord-only information: tenant count, subscription health, MRR, and sales activity across BrewPoint businesses."},
+    {section:"tenants",target:'[data-guide="admin-nav-tenants"]',title:"Tenant control",body:"Suspend or resume tenant access and review plan, owner, branch, staff, and sales data."},
+    {section:"trials",target:'[data-guide="admin-nav-trials"]',title:"Trial management",body:"Track 30-day trials, extend evaluation time, or convert a tenant when payment is confirmed."},
+    {section:"subscriptions",target:'[data-guide="admin-nav-subscriptions"]',title:"Subscriptions",body:"Change plans and control active, past-due, suspended, or cancelled subscription states."},
+    {section:"support",target:'[data-guide="admin-nav-support"]',title:"Support tickets",body:"Questions from the public BrewPoint chatbot arrive here. Open a ticket, reply as BrewPoint Admin, then mark it answered or closed."},
+    {section:"security",target:'[data-guide="admin-nav-security"]',title:"Audit & security",body:"Review platform actions and security status. Export the audit trail when you need an external record."}
+  ];
   const steps=admin?adminSteps:(tenantSteps[role]||tenantSteps.cashier);
   const [index,setIndex]=useState(0);
-  useEffect(()=>{onSectionChange?.(steps[index][0]);},[index]);
+  const [rect,setRect]=useState(null);
+  const current=steps[index];
+
+  useEffect(()=>{onSectionChange?.(current.section);},[index]);
+  useEffect(()=>{
+    let cancelled=false;
+    const locate=()=>{
+      const el=document.querySelector(current.target);
+      if(!el){setTimeout(()=>!cancelled&&locate(),120);return;}
+      el.scrollIntoView({behavior:"smooth",block:"center",inline:"center"});
+      setTimeout(()=>{
+        if(cancelled)return;
+        const r=el.getBoundingClientRect();
+        setRect({left:Math.max(8,r.left-8),top:Math.max(8,r.top-8),width:Math.min(window.innerWidth-16,r.width+16),height:Math.min(window.innerHeight-16,r.height+16)});
+      },180);
+    };
+    locate();
+    const update=()=>{const el=document.querySelector(current.target);if(el){const r=el.getBoundingClientRect();setRect({left:Math.max(8,r.left-8),top:Math.max(8,r.top-8),width:Math.min(window.innerWidth-16,r.width+16),height:Math.min(window.innerHeight-16,r.height+16)});}};
+    window.addEventListener("resize",update);
+    return()=>{cancelled=true;window.removeEventListener("resize",update);};
+  },[index,current.target,current.section]);
+
   const finish=()=>{localStorage.setItem("brewpoint-guide-"+(admin?"platform":role),"done");onClose();};
-  return <div className="guide-overlay" role="dialog" aria-modal="true"><div className="guide-card"><span className="guide-step">STEP {index+1} OF {steps.length}</span><h2>{steps[index][1]}</h2><p>{steps[index][2]}</p><div className="guide-progress">{steps.map((_,i)=><i key={i} className={i<=index?"active":""}/>)}</div><div className="guide-actions"><button className="btn secondary" disabled={index===0} onClick={()=>setIndex(i=>i-1)}>Back</button><button className="btn secondary" onClick={finish}>Exit guide</button>{index<steps.length-1?<button className="btn primary" onClick={()=>setIndex(i=>i+1)}>Next <ChevronRight size={15}/></button>:<button className="btn primary" onClick={finish}>Finish</button>}</div></div></div>;
+  const tooltipStyle=rect?{
+    left:Math.min(Math.max(16,rect.left),Math.max(16,window.innerWidth-390)),
+    top:rect.top+rect.height+16<window.innerHeight-220?rect.top+rect.height+16:Math.max(16,rect.top-205)
+  }:{left:24,top:24};
+
+  return <div className="guide-focus-layer" role="dialog" aria-modal="true">
+    {rect&&<div className="guide-spotlight" style={{left:rect.left,top:rect.top,width:rect.width,height:rect.height}}/>}
+    <div className="guide-tooltip" style={tooltipStyle}>
+      <div className="guide-tooltip-head"><span className="guide-step">GUIDE {index+1}/{steps.length}</span><button onClick={finish}><X size={15}/></button></div>
+      <h3>{current.title}</h3><p>{current.body}</p>
+      <div className="guide-progress">{steps.map((_,i)=><i key={i} className={i<=index?"active":""}/>)}</div>
+      <div className="guide-actions"><button className="btn secondary" disabled={index===0} onClick={()=>setIndex(i=>i-1)}>Back</button>{index<steps.length-1?<button className="btn primary" onClick={()=>setIndex(i=>i+1)}>Show next <ChevronRight size={15}/></button>:<button className="btn primary" onClick={finish}>Finish guide</button>}</div>
+    </div>
+  </div>;
 }
 
 function SupportChat(){
@@ -227,7 +300,7 @@ function AppShell() {
     <aside className="sidebar">
       <button className="side-brand" onClick={()=>setSection("dashboard")}><img src={ICON}/><span><b>BrewPoint</b><small>COFFEE POS</small></span></button>
       <div className="tenant"><small>WORKSPACE</small><b><Store size={15}/>{business.name}</b><span>{business.assignedBranchId?"Assigned branch":"Workspace"} · {plans[business.plan]?.name}</span></div>
-      <nav>{visibleSections.map(([id,label,Icon])=><button key={id} className={section===id?"active":""} onClick={()=>setSection(id)}><Icon size={17}/>{label}</button>)}</nav>
+      <nav>{visibleSections.map(([id,label,Icon])=><button data-guide={"nav-"+id} key={id} className={section===id?"active":""} onClick={()=>setSection(id)}><Icon size={17}/>{label}</button>)}</nav>
       <div className="side-bottom">
         <button className="sidebar-guide" onClick={()=>setGuideOpen(true)}><HelpCircle size={15}/>Guided tour</button>
         <ThemeControl theme={theme} setTheme={setTheme}/>
@@ -864,8 +937,8 @@ function OwnerConsole() {
   const titles={overview:["Platform overview","Monitor the entire BrewPoint SaaS business."],tenants:["Tenants","Manage coffee businesses, access status, and plans."],trials:["Trials","Monitor 30-day trials and conversion actions."],subscriptions:["Subscriptions","Manage active, past-due, suspended, and cancelled subscriptions."],support:["Support tickets","Reply to FAQ/chatbot tickets from prospective and existing users."],security:["Audit & security","Review platform activity and security controls."]};
   const title=titles[section];
   return <div className="owner-shell">
-    <aside className="owner-side"><Brand compact/><span className="owner-tag">PLATFORM ADMIN ONLY</span><nav><button className={section==="overview"?"active":""} onClick={()=>setSection("overview")}><LayoutDashboard/>Overview</button><button className={section==="tenants"?"active":""} onClick={()=>setSection("tenants")}><Store/>Tenants</button><button className={section==="trials"?"active":""} onClick={()=>setSection("trials")}><CalendarClock/>Trials</button><button className={section==="subscriptions"?"active":""} onClick={()=>setSection("subscriptions")}><CreditCard/>Subscriptions</button><button className={section==="support"?"active":""} onClick={()=>setSection("support")}><MessageCircle/>Support tickets</button><button className={section==="security"?"active":""} onClick={()=>setSection("security")}><ShieldCheck/>Audit & security</button></nav><div className="admin-side-actions"><button className="sidebar-guide" onClick={()=>setGuideOpen(true)}><HelpCircle size={15}/>Guided tour</button><ThemeControl theme={theme} setTheme={setTheme}/><Link className="btn secondary small wide" to="/">Public BrewPoint site</Link><button className="logout admin-logout" onClick={logout}><LogOut size={14}/>Sign out admin</button></div></aside>
-    <main className="owner-main"><header className="owner-head"><div><span className="pill">BREWPOINT PLATFORM ADMIN</span><h1>{title[0]}</h1><p>{title[1]}</p></div></header>
+    <aside className="owner-side"><Brand compact/><span className="owner-tag">PLATFORM ADMIN ONLY</span><nav><button className={section==="overview"?"active":""} onClick={()=>setSection("overview")}><LayoutDashboard/>Overview</button><button className={section==="tenants"?"active":""} data-guide="admin-nav-tenants" onClick={()=>setSection("tenants")}><Store/>Tenants</button><button className={section==="trials"?"active":""} data-guide="admin-nav-trials" onClick={()=>setSection("trials")}><CalendarClock/>Trials</button><button className={section==="subscriptions"?"active":""} data-guide="admin-nav-subscriptions" onClick={()=>setSection("subscriptions")}><CreditCard/>Subscriptions</button><button className={section==="support"?"active":""} data-guide="admin-nav-support" onClick={()=>setSection("support")}><MessageCircle/>Support tickets</button><button className={section==="security"?"active":""} data-guide="admin-nav-security" onClick={()=>setSection("security")}><ShieldCheck/>Audit & security</button></nav><div className="admin-side-actions"><button className="sidebar-guide" onClick={()=>setGuideOpen(true)}><HelpCircle size={15}/>Guided tour</button><ThemeControl theme={theme} setTheme={setTheme}/><Link className="btn secondary small wide" to="/">Public BrewPoint site</Link><button className="logout admin-logout" onClick={logout}><LogOut size={14}/>Sign out admin</button></div></aside>
+    <main className="owner-main"><header className="owner-head" data-guide="admin-overview"><div><span className="pill">BREWPOINT PLATFORM ADMIN</span><h1>{title[0]}</h1><p>{title[1]}</p></div></header>
       {section==="overview"&&<><div className="owner-notice"><CalendarClock/><p><b>Landlord administration is now separate from café tenants.</b> This console is protected by the platform-admin role and is not linked from the tenant POS.</p></div><div className="metrics"><Metric label="Total tenants" value={data.summary.totalTenants} sub={data.summary.activeTenants+" active · "+data.summary.trialTenants+" trial"}/><Metric label="Monthly recurring" value={money(data.summary.monthlyRecurringRevenue)} sub="Active plan value"/><Metric label="Platform month sales" value={money(data.summary.monthPlatformSales)} sub="Across all tenants"/><Metric label="Needs attention" value={data.summary.needsAttention} sub="Past due, suspended, or cancelled"/></div><div className="two-col"><Panel title="Recent tenants" sub="Latest businesses"><div className="list">{data.tenants.slice(0,8).map(t=><div key={t.id}><span><b>{t.name}</b><small>{t.owner_email||"No owner email"} · {plans[t.plan]?.name}</small></span><span className={"badge "+(t.is_suspended?"voided":t.subscription_status==="active"?"completed":"trialing")}>{t.is_suspended?"suspended":t.subscription_status}</span></div>)}</div></Panel><Panel title="Recent platform activity" sub="Audit trail"><div className="list">{data.audits.slice(0,10).map(x=><div key={x.id}><span><b>{x.action.replaceAll("_"," ")}</b><small>{x.business_name||"Platform"} · {dateTime(x.created_at)}</small></span></div>)}</div></Panel></div></>}
       {section==="tenants"&&<><section className="admin-toolbar"><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search tenant, owner, plan, or status…"/></section><Panel title="Tenant businesses" sub="Real subscription, branch, staff, and sales data"><div className="table-scroll"><table className="report-table admin-table"><thead><tr><th>Business</th><th>Owner</th><th>Plan</th><th>Status</th><th>Branches</th><th>Staff</th><th>Month sales</th><th>Actions</th></tr></thead><tbody>{tenants.map(t=><tr key={t.id}><td><b>{t.name}</b><small>{dateTime(t.created_at)}</small></td><td>{t.owner_name||"—"}<small>{t.owner_email||""}</small></td><td>{plans[t.plan]?.name||t.plan}</td><td><span className={"badge "+(t.is_suspended?"voided":t.subscription_status==="active"?"completed":"trialing")}>{t.is_suspended?"suspended":t.subscription_status}</span></td><td>{t.branches}</td><td>{t.members}</td><td>{money(t.month_sales)}</td><td><span className="row-actions">{t.is_suspended?<button className="btn secondary tiny" onClick={()=>act(t.id,"resume")}>Resume</button>:<button className="btn secondary tiny" onClick={()=>act(t.id,"suspend")}>Suspend</button>}{t.subscription_status!=="active"&&<button className="btn primary tiny" onClick={()=>act(t.id,"mark_active")}>Activate</button>}</span></td></tr>)}</tbody></table></div></Panel></>}
       {section==="trials"&&<><div className="metrics"><Metric label="Active trials" value={trials.length} sub="Currently evaluating BrewPoint"/><Metric label="Expiring ≤7 days" value={trials.filter(t=>daysLeft(t)<=7).length} sub="Follow-up candidates"/><Metric label="Pro trials" value={trials.filter(t=>t.plan==="pro").length} sub="Pro selected"/><Metric label="Business trials" value={trials.filter(t=>t.plan==="business").length} sub="Business selected"/></div><Panel title="Trial management" sub="Extend, reset, or convert a trial"><div className="table-scroll"><table className="report-table"><thead><tr><th>Business</th><th>Owner</th><th>Trial plan</th><th>Ends</th><th>Days left</th><th>Actions</th></tr></thead><tbody>{trials.map(t=><tr key={t.id}><td><b>{t.name}</b></td><td>{t.owner_email||"—"}</td><td>{plans[t.plan]?.name}</td><td>{dateTime(t.trial_ends_at)}</td><td><b>{daysLeft(t)}</b></td><td><span className="row-actions"><button className="btn secondary tiny" onClick={()=>act(t.id,"extend_trial")}>+7 days</button><button className="btn secondary tiny" onClick={()=>act(t.id,"extend_trial_30")}>Reset 30 days</button><button className="btn primary tiny" onClick={()=>act(t.id,"mark_active")}>Activate</button></span></td></tr>)}</tbody></table></div></Panel></>}
