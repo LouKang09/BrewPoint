@@ -1310,7 +1310,7 @@ app.post("/api/subscription/change", auth, requireContext, allow("owner","admin"
 });
 
 const PUBLIC_FAQS=[
-  {q:"How long is the free trial?",a:"Every new BrewPoint tenant receives a 30-day trial before a paid plan is required."},
+  {q:"How long is the free trial?",a:"Every new BrewPoint tenant receives a 30-day Starter trial. Pro and Business become upgrade options after Starter activation."},
   {q:"What payments does BrewPoint support?",a:"The POS supports Cash and GCash. GCash can display the café's uploaded QR for scan-to-pay, with the cashier recording the payment reference."},
   {q:"Can BrewPoint track ingredients?",a:"Yes. Product recipes deduct ingredient quantities automatically after completed sales, with stock alerts and movement history."},
   {q:"Can I use BrewPoint for multiple branches?",a:"Yes. Branch limits depend on your Starter, Pro, or Business plan."},
