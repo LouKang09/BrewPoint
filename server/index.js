@@ -234,6 +234,12 @@ async function migrate() {
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_qr_data TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_account_name TEXT;
     ALTER TABLE businesses ADD COLUMN IF NOT EXISTS gcash_account_number TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS billing_card_brand TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS billing_card_last4 TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS billing_card_exp_month INTEGER;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS billing_card_exp_year INTEGER;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS billing_card_holder TEXT;
+    ALTER TABLE businesses ADD COLUMN IF NOT EXISTS billing_card_added_at TIMESTAMPTZ;
     ALTER TABLE business_members ADD COLUMN IF NOT EXISTS branch_id BIGINT;
     ALTER TABLE promos ADD COLUMN IF NOT EXISTS rules JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE sales ADD COLUMN IF NOT EXISTS special_discount_type TEXT;
@@ -276,6 +282,37 @@ function signSession(user) {
   );
 }
 
+function bearerToken(req) {
+  const header = String(req.get("authorization") || "");
+  return header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
+}
+
+function luhnValid(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 12 || digits.length > 19) return false;
+  let sum = 0;
+  let doubleIt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = Number(digits[i]);
+    if (doubleIt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    doubleIt = !doubleIt;
+  }
+  return sum % 10 === 0;
+}
+
+function detectCardBrand(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (/^4/.test(digits)) return "Visa";
+  if (/^(5[1-5]|2[2-7])/.test(digits)) return "Mastercard";
+  if (/^3[47]/.test(digits)) return "American Express";
+  if (/^6(?:011|5)/.test(digits)) return "Discover";
+  return "Card";
+}
+
 function setSession(res, user) {
   res.cookie("bp_session", signSession(user), {
     httpOnly: true,
@@ -296,7 +333,7 @@ function setAdminSession(res, user) {
 
 async function adminAuth(req, res, next) {
   try {
-    const token = req.cookies.bp_admin_session;
+    const token = bearerToken(req) || req.cookies.bp_admin_session;
     if (!token) return res.status(401).json({ message: "Please sign in to BrewPoint Admin." });
     const payload = jwt.verify(token, JWT_SECRET);
     const { rows } = await pool.query(
@@ -315,7 +352,7 @@ async function adminAuth(req, res, next) {
 
 async function auth(req, res, next) {
   try {
-    const token = req.cookies.bp_session;
+    const token = bearerToken(req) || req.cookies.bp_session;
     if (!token) return res.status(401).json({ message: "Please sign in." });
     const payload = jwt.verify(token, JWT_SECRET);
     const { rows } = await pool.query(
@@ -334,7 +371,8 @@ async function getContext(userId) {
   const { rows } = await pool.query(
     `SELECT bm.business_id,bm.role,bm.branch_id,b.name,b.slug,b.plan,b.subscription_status,
             b.trial_started_at,b.trial_ends_at,b.current_period_end,b.currency,
-            b.timezone,b.is_suspended,b.gcash_qr_data,b.gcash_account_name,b.gcash_account_number
+            b.timezone,b.is_suspended,b.gcash_qr_data,b.gcash_account_name,b.gcash_account_number,
+            b.billing_card_brand,b.billing_card_last4,b.billing_card_exp_month,b.billing_card_exp_year,b.billing_card_holder,b.billing_card_added_at
        FROM business_members bm
        JOIN businesses b ON b.id=bm.business_id
       WHERE bm.user_id=$1 AND bm.is_active=true
@@ -411,10 +449,6 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.post("/api/auth/register", async (req, res) => {
-  const requiredAccessCode = String(process.env.BETA_ACCESS_CODE || "");
-  if (requiredAccessCode && String(req.body.accessCode || "") !== requiredAccessCode) {
-    return res.status(403).json({ message: "Invalid BrewPoint beta access code." });
-  }
   const email = String(req.body.email || "").trim().toLowerCase();
   const displayName = String(req.body.displayName || "").trim();
   const password = String(req.body.password || "");
@@ -434,8 +468,9 @@ app.post("/api/auth/register", async (req, res) => {
       [email, displayName, hash, platformRole]
     );
     await client.query("COMMIT");
+    const token = signSession(rows[0]);
     setSession(res, rows[0]);
-    res.json({ user: rows[0], firstUser: platformRole === "platform_admin" });
+    res.json({ user: rows[0], firstUser: platformRole === "platform_admin", token });
   } catch (error) {
     await client.query("ROLLBACK");
     if (error.message === "EMAIL_EXISTS") return res.status(409).json({ message: "That email already has an account." });
@@ -454,13 +489,31 @@ app.post("/api/auth/login", async (req, res) => {
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
     return res.status(401).json({ message: "Incorrect email or password." });
   }
+  const token = signSession(user);
   setSession(res, user);
-  res.json({ user: { id: user.id, email: user.email, displayName: user.display_name, platformRole: user.platform_role } });
+  res.json({ user: { id: user.id, email: user.email, displayName: user.display_name, platformRole: user.platform_role }, token });
 });
 
 app.post("/api/auth/logout", (_req, res) => {
   res.clearCookie("bp_session");
   res.json({ ok: true });
+});
+
+app.post("/api/owner/auth/login", async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const password = String(req.body.password || "");
+  const { rows } = await pool.query("SELECT * FROM users WHERE email=$1", [email]);
+  const user = rows[0];
+  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    return res.status(401).json({ message: "Incorrect owner email or password." });
+  }
+  const context = await getContext(user.id);
+  if (!context || context.role !== "owner") {
+    return res.status(403).json({ message: "This account is not registered as the business owner." });
+  }
+  const token = signSession(user);
+  setSession(res, user);
+  res.json({ user: { id:user.id,email:user.email,displayName:user.display_name,platformRole:user.platform_role }, token });
 });
 
 app.post("/api/admin/auth/login", async (req, res) => {
@@ -471,8 +524,9 @@ app.post("/api/admin/auth/login", async (req, res) => {
   if (!user || user.platform_role !== "platform_admin" || !(await bcrypt.compare(password, user.password_hash))) {
     return res.status(401).json({ message: "Incorrect platform-admin email or password." });
   }
+  const token = signSession(user);
   setAdminSession(res, user);
-  res.json({ user: { id:user.id,email:user.email,displayName:user.display_name,platformRole:user.platform_role } });
+  res.json({ user: { id:user.id,email:user.email,displayName:user.display_name,platformRole:user.platform_role }, token });
 });
 
 app.post("/api/admin/auth/logout", (_req, res) => {
@@ -641,6 +695,14 @@ app.get("/api/workspace", auth, requireContext, async (req, res) => {
       memberRole:req.context.role,assignedBranchId:req.context.branch_id?String(req.context.branch_id):null,
       gcashQrData:req.context.gcash_qr_data||null,gcashAccountName:req.context.gcash_account_name||null,
       gcashAccountNumber:req.context.gcash_account_number||null,
+      billingCard:req.context.billing_card_last4?{
+        brand:req.context.billing_card_brand||"Card",
+        last4:req.context.billing_card_last4,
+        expMonth:req.context.billing_card_exp_month,
+        expYear:req.context.billing_card_exp_year,
+        holder:req.context.billing_card_holder||"",
+        addedAt:req.context.billing_card_added_at
+      }:null,
       staffLimit:PLAN_LIMITS[req.context.plan]?.staff || 3,
       branchLimit:PLAN_LIMITS[req.context.plan]?.branches || 1
     },
@@ -1295,9 +1357,38 @@ app.post("/api/sales/void", auth, requireContext, allow("owner","admin","manager
   }catch(error){await client.query("ROLLBACK");res.status(400).json({message:error.message});}finally{client.release();}
 });
 
+app.post("/api/billing/card", auth, requireContext, allow("owner"), async(req,res)=>{
+  const holder=String(req.body.holder||"").trim();
+  const raw=String(req.body.cardNumber||"");
+  const digits=raw.replace(/\D/g,"");
+  const expMonth=Number(req.body.expMonth);
+  const expYear=Number(req.body.expYear);
+  if(holder.length<2)return res.status(400).json({message:"Enter the cardholder name."});
+  if(!luhnValid(digits))return res.status(400).json({message:"Enter a valid card number."});
+  if(!Number.isInteger(expMonth)||expMonth<1||expMonth>12)return res.status(400).json({message:"Enter a valid expiry month."});
+  const now=new Date();
+  const currentYear=now.getUTCFullYear();
+  const currentMonth=now.getUTCMonth()+1;
+  if(!Number.isInteger(expYear)||expYear<currentYear||(expYear===currentYear&&expMonth<currentMonth)||expYear>currentYear+20){
+    return res.status(400).json({message:"Enter a valid non-expired card date."});
+  }
+  const brand=detectCardBrand(digits);
+  const last4=digits.slice(-4);
+  await pool.query(`UPDATE businesses SET billing_card_brand=$1,billing_card_last4=$2,billing_card_exp_month=$3,billing_card_exp_year=$4,billing_card_holder=$5,billing_card_added_at=now(),updated_at=now() WHERE id=$6`,[brand,last4,expMonth,expYear,holder,req.context.business_id]);
+  await audit(pool,req.context.business_id,req.user.id,"BILLING_CARD_REGISTERED","business",req.context.business_id,brand+" ending "+last4);
+  res.json({billingCard:{brand,last4,expMonth,expYear,holder}});
+});
+
+app.delete("/api/billing/card", auth, requireContext, allow("owner"), async(req,res)=>{
+  await pool.query(`UPDATE businesses SET billing_card_brand=NULL,billing_card_last4=NULL,billing_card_exp_month=NULL,billing_card_exp_year=NULL,billing_card_holder=NULL,billing_card_added_at=NULL,updated_at=now() WHERE id=$1`,[req.context.business_id]);
+  await audit(pool,req.context.business_id,req.user.id,"BILLING_CARD_REMOVED","business",req.context.business_id,"Billing card metadata removed");
+  res.json({ok:true});
+});
+
 app.post("/api/subscription/change", auth, requireContext, allow("owner","admin"), async(req,res)=>{
   const plan=["starter","pro","business"].includes(req.body.plan)?req.body.plan:null;
   if(!plan)return res.status(400).json({message:"Invalid plan."});
+  if(!req.context.billing_card_last4)return res.status(400).json({message:"No billing card is registered. Ask the business owner to register a card in Plan & Billing before changing or activating a plan."});
   if(req.context.subscription_status==="trialing" && plan!=="starter")return res.status(400).json({message:"The 30-day trial is limited to Starter. Activate Starter first, then upgrade after the trial subscription is active."});
   const currentMembers=await pool.query("SELECT count(*)::int AS count FROM business_members WHERE business_id=$1 AND is_active=true",[req.context.business_id]);
   const currentBranches=await pool.query("SELECT count(*)::int AS count FROM branches WHERE business_id=$1 AND is_active=true",[req.context.business_id]);
@@ -1408,7 +1499,8 @@ app.get("/api/landlord", adminAuth, async(req,res)=>{
           (SELECT u.display_name FROM business_members bm JOIN users u ON u.id=bm.user_id WHERE bm.business_id=b.id AND bm.role='owner' ORDER BY bm.id LIMIT 1) AS owner_name,
           COALESCE((SELECT sum(s.total) FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('month',now())),0) AS month_sales,
           COALESCE((SELECT sum(s.total) FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('day',now())),0) AS today_sales,
-          COALESCE((SELECT count(*)::int FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('month',now())),0) AS month_orders
+          COALESCE((SELECT count(*)::int FROM sales s WHERE s.business_id=b.id AND s.status='completed' AND s.created_at>=date_trunc('month',now())),0) AS month_orders,
+          (b.billing_card_last4 IS NOT NULL) AS has_billing_card
         FROM businesses b ORDER BY b.created_at DESC
       `),
       pool.query(`SELECT a.*,b.name AS business_name,u.display_name,u.email
@@ -1434,7 +1526,7 @@ app.get("/api/landlord", adminAuth, async(req,res)=>{
       },
       planBreakdown,
       security:{
-        betaGateEnabled:Boolean(process.env.BETA_ACCESS_CODE),
+        publicTrialSignup:true,
         platformAdmins:Number(userStats.rows[0]?.platform_admins||0),
         totalUsers:Number(userStats.rows[0]?.total_users||0),
         database:"healthy",
