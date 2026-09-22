@@ -4,7 +4,7 @@ import {
   ArrowRight, BarChart3, Boxes, Building2, CalendarClock, Check, CircleDollarSign,
   Coffee, CreditCard, LayoutDashboard, LogOut, Minus, PackagePlus, Plus, ReceiptText,
   Search, ShieldCheck, ShoppingBag, Store, Tags, Trash2, Users, WalletCards,
-  MessageCircle, Sun, Moon, Monitor, HelpCircle, Printer, X, ChevronRight, QrCode
+  MessageCircle, Sun, Moon, Monitor, HelpCircle, Printer, X, ChevronRight, QrCode, Sparkles
 } from "lucide-react";
 
 const ICON = "data:image/webp;base64,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";
@@ -196,15 +196,15 @@ function Landing() {
         [BarChart3,"Reports & support","Print-ready reports, CSV export, audit history, FAQs, and support tickets."]
       ].map(([Icon,title,text])=><article key={title}><span className="feature-icon"><Icon/></span><h3>{title}</h3><p>{text}</p></article>)}</div>
     </section>
-    <section id="pricing" className="section pricing"><div className="section-title"><span className="eyebrow">LAUNCH PRICING</span><h2>Start small. Upgrade when the café grows.</h2><p>Every plan starts with a 30-day free trial.</p></div>
-      <div className="plan-grid">{Object.entries(plans).map(([key,plan])=><article className={"pricing-card "+(key==="pro"?"popular":"")} key={key}>{key==="pro"&&<span className="popular-label">MOST POPULAR</span>}<h3>{plan.name}</h3><div className="price">{money(plan.price)}<small>/month</small></div><p>{plan.branches} branch{plan.branches>1?"es":""} · {plan.staff} staff accounts</p><ul>{plan.features.map(f=><li key={f}><Check size={14}/>{f}</li>)}</ul><Link className="btn primary wide" to="/signup">Try {plan.name} free</Link></article>)}</div>
+    <section id="pricing" className="section pricing"><div className="section-title"><span className="eyebrow">LAUNCH PRICING</span><h2>Start small. Upgrade when the café grows.</h2><p>The 30-day free trial starts on Starter. Upgrade to Pro or Business after activation when you need more branches and controls.</p></div>
+      <div className="plan-grid">{Object.entries(plans).map(([key,plan])=><article className={"pricing-card "+(key==="pro"?"popular":"")} key={key}>{key==="pro"&&<span className="popular-label">MOST POPULAR</span>}<h3>{plan.name}</h3><div className="price">{money(plan.price)}<small>/month</small></div><p>{plan.branches} branch{plan.branches>1?"es":""} · {plan.staff} staff accounts</p><ul>{plan.features.map(f=><li key={f}><Check size={14}/>{f}</li>)}</ul><Link className="btn primary wide" to="/signup">{key==="starter"?"Start Starter free":"Start Starter trial"}</Link></article>)}</div>
     </section>
     <footer><Brand compact/><span>© 2026 BrewPoint. Brew Ideas. Drive Growth.</span></footer>
     <SupportChat/>
   </div>;
 }
 
-function AuthPage({mode,destination="/app"}) {
+function AuthPage({mode,destination="/app",admin=false}) {
   const nav=useNavigate();
   const [form,setForm]=useState({displayName:"",email:"",password:"",accessCode:""});
   const [error,setError]=useState("");
@@ -212,13 +212,13 @@ function AuthPage({mode,destination="/app"}) {
   const submit=async e=>{
     e.preventDefault();setError("");setLoading(true);
     try{
-      await api(mode==="signup"?"/auth/register":"/auth/login",{method:"POST",body:form});
+      await api(mode==="signup"?"/auth/register":admin?"/admin/auth/login":"/auth/login",{method:"POST",body:form});
       nav(destination);
     }catch(err){setError(err.message);}finally{setLoading(false);}
   };
   return <div className="auth-page">
     <aside className="auth-side"><img className="auth-official-logo" src={LOGO} alt="BrewPoint"/><h1>{mode==="signup"?"Build a calmer back office for your café.":"Welcome back to BrewPoint."}</h1><p>Sales, recipes, inventory, expenses, customers, staff, branches, and reporting in one workspace.</p><div className="auth-benefits"><span><Check/>30-day trial</span><span><Check/>Private tenant workspace</span><span><Check/>No real payment in testing mode</span></div></aside>
-    <main className="auth-main"><form className="auth-card" onSubmit={submit}><span className="pill">{mode==="signup"?"START FREE":"SIGN IN"}</span><h2>{mode==="signup"?"Create your BrewPoint account":"Open your workspace"}</h2>
+    <main className="auth-main"><form className="auth-card" onSubmit={submit}><span className="pill">{mode==="signup"?"START FREE":admin?"PLATFORM ADMIN":"SIGN IN"}</span><h2>{mode==="signup"?"Create your BrewPoint account":admin?"Open platform administration":"Open your workspace"}</h2>
       {mode==="signup"&&<label>Full name<input value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} placeholder="Your name" required/></label>}
       {mode==="signup"&&<label>Beta access code<input value={form.accessCode} onChange={e=>setForm({...form,accessCode:e.target.value})} placeholder="Private test access code" required/></label>}
       <label>Email<input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="you@coffee.com" required/></label>
@@ -234,21 +234,20 @@ function Loading({text="Loading BrewPoint…"}) { return <div className="loading
 
 function StoreSetup({onDone}) {
   const [name,setName]=useState("");
-  const [plan,setPlan]=useState("pro");
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
   const submit=async e=>{
     e.preventDefault();setLoading(true);setError("");
-    try{await api("/business/setup",{method:"POST",body:{businessName:name,plan}});onDone();}
+    try{await api("/business/setup",{method:"POST",body:{businessName:name,plan:"starter"}});onDone();}
     catch(err){setError(err.message);}finally{setLoading(false);}
   };
-  return <div className="setup-page"><div className="setup-logo"><img src={LOGO}/><h1>Open your coffee shop workspace.</h1><p>We’ll seed sample coffee products, ingredients, recipes, a main branch, and the 143 Promo so you can test immediately.</p></div><form className="setup-card" onSubmit={submit}><span className="pill">30-DAY FREE TRIAL</span><h2>Create your store</h2><label>Business name<input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Daily Grind Coffee" required/></label><label>Trial plan<select value={plan} onChange={e=>setPlan(e.target.value)}>{Object.entries(plans).map(([key,p])=><option key={key} value={key}>{p.name} · {money(p.price)}/mo after trial</option>)}</select></label>{error&&<div className="form-error">{error}</div>}<button className="btn primary wide" disabled={loading}>{loading?"Creating…":"Start 30-day trial"}</button><small>No real payment is collected in this testing build.</small></form></div>;
+  return <div className="setup-page"><div className="setup-logo"><img src={LOGO}/><h1>Open your coffee shop workspace.</h1><p>We’ll seed sample coffee products, ingredients, recipes, a main branch, and the 143 Promo so you can test immediately.</p></div><form className="setup-card" onSubmit={submit}><span className="pill">30-DAY STARTER TRIAL</span><h2>Create your store</h2><label>Business name<input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Daily Grind Coffee" required/></label><div className="trial-plan-lock"><b>Starter · {money(plans.starter.price)}/month after trial</b><span>Your free trial intentionally starts on Starter. Pro and Business become upgrade choices after Starter is activated.</span></div>{error&&<div className="form-error">{error}</div>}<button className="btn primary wide" disabled={loading||name.trim().length<2}>{loading?"Creating…":"Start 30-day Starter trial"}</button><small>No real payment is collected in this testing build.</small></form></div>;
 }
 
 const sections = [
   ["dashboard","Dashboard",LayoutDashboard],["pos","Point of Sale",ShoppingBag],["inventory","Inventory",Boxes],
   ["products","Products & Recipes",PackagePlus],["customers","Customers & Promos",Tags],["expenses","Expenses",WalletCards],
-  ["reports","Reports",BarChart3],["team","Team & Branches",Users],["billing","Plan & Billing",CreditCard]
+  ["reports","Reports",BarChart3],["team","Team & Branches",Users],["preview","Preview Lab",Sparkles],["billing","Plan & Billing",CreditCard]
 ];
 
 function AppShell() {
@@ -286,13 +285,13 @@ function AppShell() {
   if(!workspace)return <Loading text="Opening your store…"/>;
   const role=business.memberRole;
   const allowedByRole={
-    owner:["dashboard","pos","inventory","products","customers","expenses","reports","team","billing"],
-    admin:["dashboard","pos","inventory","products","customers","expenses","reports","team","billing"],
+    owner:["dashboard","pos","inventory","products","customers","expenses","reports","team","preview","billing"],
+    admin:["dashboard","pos","inventory","products","customers","expenses","reports","team","preview","billing"],
     manager:["dashboard","pos","inventory","products","customers","expenses","reports"],
     inventory:["dashboard","inventory"],
     cashier:["dashboard","pos","customers"]
   };
-  const visibleSections=sections.filter(([id])=>(allowedByRole[role]||["dashboard","pos"]).includes(id));
+  const visibleSections=sections.filter(([id])=>(allowedByRole[role]||["dashboard","pos"]).includes(id)).map(s=>s[0]==="customers"&&!["owner","admin"].includes(role)?["customers","Customers",Users]:s);
   const active=visibleSections.find(s=>s[0]===section)||visibleSections[0];
   if(!visibleSections.some(([id])=>id===section))setTimeout(()=>setSection("dashboard"),0);
 
@@ -948,12 +947,22 @@ function OwnerConsole() {
 }
 
 export default function App() {
+  useEffect(()=>{
+    const stopMenu=e=>e.preventDefault();
+    const stopKeys=e=>{
+      const key=String(e.key||"").toLowerCase();
+      if(key==="f12"||(e.ctrlKey&&e.shiftKey&&["i","j","c"].includes(key))||(e.metaKey&&e.altKey&&["i","j","c"].includes(key))||(e.ctrlKey&&key==="u"))e.preventDefault();
+    };
+    document.addEventListener("contextmenu",stopMenu);
+    document.addEventListener("keydown",stopKeys);
+    return()=>{document.removeEventListener("contextmenu",stopMenu);document.removeEventListener("keydown",stopKeys);};
+  },[]);
   return <Routes>
     <Route path="/" element={<Landing/>}/>
     <Route path="/login" element={<AuthPage mode="login"/>}/>
     <Route path="/signup" element={<AuthPage mode="signup"/>}/>
     <Route path="/app" element={<AppShell/>}/>
-    <Route path="/admin/login" element={<AuthPage mode="login" destination="/admin"/>}/><Route path="/admin" element={<OwnerConsole/>}/><Route path="/owner" element={<Navigate to="/admin"/>}/>
+    <Route path="/admin/login" element={<AuthPage mode="login" destination="/admin" admin/>}/><Route path="/admin" element={<OwnerConsole/>}/><Route path="/owner" element={<Navigate to="/admin"/>}/>
     <Route path="*" element={<Navigate to="/"/>}/>
   </Routes>;
 }
