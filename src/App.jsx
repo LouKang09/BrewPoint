@@ -1109,14 +1109,47 @@ function PreviewLab({admin=false,ws=null,data=null}) {
 
 function Billing({ws,reload,notify}) {
   const isTrial=ws.business.subscriptionStatus==="trialing";
+  const isOwner=ws.business.memberRole==="owner";
+  const [cardForm,setCardForm]=useState({holder:"",cardNumber:"",expMonth:"",expYear:""});
+  const [cardBusy,setCardBusy]=useState(false);
+  const card=ws.business.billingCard;
+
+  const saveCard=async()=>{
+    if(!isOwner)return notify("Only the business owner can register the billing card.","error");
+    if(cardForm.holder.trim().length<2||cardForm.cardNumber.replace(/\D/g,"").length<12||!cardForm.expMonth||!cardForm.expYear)return notify("Complete the cardholder, card number, and expiry fields.","error");
+    setCardBusy(true);
+    try{
+      await api("/billing/card",{method:"POST",body:cardForm});
+      notify("Billing card registered. Only card metadata is retained.");
+      setCardForm({holder:"",cardNumber:"",expMonth:"",expYear:""});
+      await reload();
+    }catch(err){notify(err.message,"error");}finally{setCardBusy(false);}
+  };
+
+  const removeCard=async()=>{
+    if(!isOwner)return notify("Only the business owner can remove the billing card.","error");
+    if(!window.confirm("Remove the billing card on file? Plan changes will be blocked until another card is registered."))return;
+    try{await api("/billing/card",{method:"DELETE"});notify("Billing card removed");await reload();}catch(err){notify(err.message,"error");}
+  };
+
   const change=async plan=>{
+    if(!card){notify(isOwner?"Register a billing card first.":"No billing card is registered. Contact your business owner before changing plans.","warn");return;}
     if(isTrial&&plan!=="starter"){notify("Your free trial is Starter-only. Activate Starter first; Pro and Business become available afterward.","warn");return;}
     try{await api("/subscription/change",{method:"POST",body:{plan,activateDemo:true}});notify("Sandbox subscription activated");await reload();}catch(err){notify(err.message,"error");}
   };
-  return <div className="stack"><section className="billing-hero"><div><span className={"status "+ws.business.subscriptionStatus}>{ws.business.subscriptionStatus}</span><h2>{plans[ws.business.plan].name} plan</h2><p>{isTrial?"Starter trial · "+ws.summary.trialDaysLeft+" days remaining. Pro and Business unlock after Starter activation.":"Current period ends "+dateTime(ws.business.currentPeriodEnd)}</p></div><strong>{money(plans[ws.business.plan].price)}<small>/month</small></strong></section>
-    {isTrial&&<div className="trial-plan-message"><Sparkles/><div><b>30-day marketing trial = Starter</b><span>You can explore BrewPoint with the Starter limits. Activate Starter to continue, then upgrade to Pro or Business whenever the café needs more branches, staff, or reporting capacity.</span></div></div>}
-    <div className="plan-grid compact-plans">{Object.entries(plans).map(([key,p])=>{const locked=isTrial&&key!=="starter";return <article className={"pricing-card billing-plan-card "+(key===ws.business.plan?"selected ":"")+(locked?"trial-locked":"")} key={key}>{key===ws.business.plan&&<span className="pill">CURRENT</span>}{locked&&<span className="locked-plan-label">AFTER TRIAL</span>}<h3>{p.name}</h3><div className="price">{money(p.price)}<small>/month</small></div><p>{p.branches} branch{p.branches>1?"es":""} · {p.staff} staff accounts</p><ul className="billing-feature-list">{p.features.map(feature=><li key={feature}><Check size={13}/><span>{feature}</span></li>)}</ul><button className="btn primary wide" disabled={locked} onClick={()=>change(key)}>{locked?"Available after Starter trial":key===ws.business.plan&&ws.business.subscriptionStatus==="active"?"Renew sandbox period":ws.business.subscriptionStatus==="suspended"&&key===ws.business.plan?"Reactivate "+p.name:"Activate "+p.name+" in sandbox"}</button></article>})}</div>
-    <div className="info-note"><b>Testing mode:</b> plan activation simulates a successful 30-day payment period. No card, GCash, or bank account is charged.</div>
+
+  return <div className="stack">
+    <section className="billing-hero"><div><span className={"status "+ws.business.subscriptionStatus}>{ws.business.subscriptionStatus}</span><h2>{plans[ws.business.plan].name} plan</h2><p>{isTrial?"Starter trial · "+ws.summary.trialDaysLeft+" days remaining. Pro and Business unlock after Starter activation.":"Current period ends "+dateTime(ws.business.currentPeriodEnd)}</p></div><strong>{money(plans[ws.business.plan].price)}<small>/month</small></strong></section>
+
+    <Panel title="Billing card" sub={isOwner?"The business owner controls the card required for plan activation and switching.":"Plan changes require a card registered by the business owner."}>
+      {card?<div className="billing-card-row"><div className="billing-card-visual"><CreditCard/><span><b>{card.brand} •••• {card.last4}</b><small>{card.holder||"Business owner"} · Expires {String(card.expMonth).padStart(2,"0")}/{card.expYear}</small></span></div><div className="row-actions"><span className="badge completed">Card on file</span>{isOwner&&<button className="btn secondary small" onClick={removeCard}>Remove card</button>}</div></div>:isOwner?<div className="billing-card-register"><div className="billing-safety-note"><ShieldCheck/><div><b>Testing billing profile</b><span>Do not use a real production card in this sandbox. BrewPoint validates the number but stores only brand, last four digits, expiry, and cardholder name. A live release should use a PCI-compliant payment gateway.</span></div></div><div className="preview-form-grid"><label>Cardholder *<input value={cardForm.holder} onChange={e=>setCardForm({...cardForm,holder:e.target.value})} placeholder="Business owner"/></label><label>Test card number *<input inputMode="numeric" value={cardForm.cardNumber} onChange={e=>setCardForm({...cardForm,cardNumber:e.target.value})} placeholder="Use a valid test number"/></label><label>Expiry month *<input type="number" min="1" max="12" value={cardForm.expMonth} onChange={e=>setCardForm({...cardForm,expMonth:e.target.value})} placeholder="MM"/></label><label>Expiry year *<input type="number" min={new Date().getFullYear()} value={cardForm.expYear} onChange={e=>setCardForm({...cardForm,expYear:e.target.value})} placeholder="YYYY"/></label><button className="btn primary" disabled={cardBusy||cardForm.holder.trim().length<2||cardForm.cardNumber.replace(/\D/g,"").length<12||!cardForm.expMonth||!cardForm.expYear} onClick={saveCard}>{cardBusy?"Registering…":"Register test card"}</button></div></div>:<div className="billing-owner-required"><ShieldCheck/><div><b>No billing card registered</b><span>Contact the business owner. Tenant Admin can review plans, but the owner must register the billing card before any activation, renewal, or plan switch.</span></div><Link className="btn secondary small" to="/owner/login">Owner login</Link></div>}
+    </Panel>
+
+    {isTrial&&<div className="trial-plan-message"><Sparkles/><div><b>30-day marketing trial = Starter</b><span>You can explore BrewPoint with Starter limits. A billing card is required when the owner activates Starter; Pro and Business become upgrade choices afterward.</span></div></div>}
+
+    <div className="plan-grid compact-plans">{Object.entries(plans).map(([key,p])=>{const trialLocked=isTrial&&key!=="starter";const billingLocked=!card;const locked=trialLocked||billingLocked;return <article className={"pricing-card billing-plan-card "+(key===ws.business.plan?"selected ":"")+(locked?"trial-locked":"")} key={key}>{key===ws.business.plan&&<span className="pill">CURRENT</span>}{trialLocked&&<span className="locked-plan-label">AFTER TRIAL</span>}{billingLocked&&!trialLocked&&<span className="locked-plan-label">CARD REQUIRED</span>}<h3>{p.name}</h3><div className="price">{money(p.price)}<small>/month</small></div><p>{p.branches} branch{p.branches>1?"es":""} · {p.staff} staff accounts</p><ul className="billing-feature-list">{p.features.map(feature=><li key={feature}><Check size={13}/><span>{feature}</span></li>)}</ul><button className="btn primary wide" disabled={locked} onClick={()=>change(key)}>{trialLocked?"Available after Starter activation":billingLocked?(isOwner?"Register card first":"Contact owner to add card"):key===ws.business.plan&&ws.business.subscriptionStatus==="active"?"Renew sandbox period":ws.business.subscriptionStatus==="suspended"&&key===ws.business.plan?"Reactivate "+p.name:"Activate "+p.name+" in sandbox"}</button></article>})}</div>
+
+    <div className="info-note"><b>Testing mode:</b> registering a card only creates a safe card-on-file record for plan-gating. No card, GCash, or bank account is charged in this build.</div>
   </div>;
 }
 
