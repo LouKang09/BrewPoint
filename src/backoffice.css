@@ -67,3 +67,12 @@
   .sales-filters{grid-template-columns:1fr}.sales-kpis{grid-template-columns:1fr}.sales-kpi{border-right:0}.chart-head,.sales-table-head{align-items:flex-start;flex-direction:column}
   .compact-grid{grid-template-columns:1fr}.auth-official-logo{width:86%;max-height:220px}
 }
+
+.category-manager{padding:14px 16px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.category-chips{display:flex;gap:7px;flex-wrap:wrap}
+.category-chips>span{display:inline-flex;align-items:center;gap:6px;background:#f7f3ed;border:1px solid var(--line);border-radius:999px;padding:7px 9px;font-size:9px;font-weight:800}
+.category-chips button{border:0;background:transparent;color:#9a5353;font-size:14px;line-height:1;cursor:pointer;padding:0}
+.category-add{display:flex;gap:7px;min-width:320px;flex:1;justify-content:flex-end}.category-add input{max-width:260px}
+.inline-form-title{font-size:11px;margin:0 0 2px;color:var(--navy)}
+.checkbox-row{display:flex!important;flex-direction:row!important;align-items:center;gap:8px!important;font-size:9px!important;font-weight:700!important}.checkbox-row input{width:auto!important;box-shadow:none!important}
+@media(max-width:700px){.category-add{min-width:100%;justify-content:stretch}.category-add input{max-width:none}.category-add .btn{white-space:nowrap}}
