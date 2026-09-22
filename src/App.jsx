@@ -353,19 +353,27 @@ function POS({ws,reload,notify}) {
   const [specialDiscountType,setSpecialDiscountType]=useState("");
   const [specialDiscountReference,setSpecialDiscountReference]=useState("");
   const [busy,setBusy]=useState(false);
+  const [paymentOpen,setPaymentOpen]=useState(false);
+  const [successReceipt,setSuccessReceipt]=useState(null);
 
   useEffect(()=>{if(assignedBranchId)setBranchId(assignedBranchId);},[assignedBranchId]);
 
+  const selectedBranch=ws.branches.find(b=>String(b.id)===String(branchId));
+  const branchMaintenance=Boolean(selectedBranch?.is_maintenance);
   const categoryNames=ws.categories.filter(c=>String(c.name).toLowerCase()!=="promos").map(c=>c.name);
   const products=ws.products.filter(p=>p.is_active&&(category==="All"||p.category_name===category)&&p.name.toLowerCase().includes(search.toLowerCase()));
   const activePromos=ws.promos.filter(p=>p.is_active);
 
   const promoRules=p=>{
-    if(Array.isArray(p?.rules)&&p.rules.length)return p.rules.map(r=>({categoryId:String(r.categoryId),qty:Number(r.qty||1)}));
+    if(Array.isArray(p?.rules)&&p.rules.length)return p.rules.map(r=>({
+      categoryId:String(r.categoryId),
+      qty:Number(r.qty||1),
+      productIds:Array.isArray(r.productIds)?r.productIds.map(String):[]
+    }));
     if(String(p?.name||"").toLowerCase().includes("143")){
       const coffee=ws.categories.find(c=>String(c.name).toLowerCase()==="coffee")||ws.categories.find(c=>String(c.name).toLowerCase().includes("coffee"));
       const food=ws.categories.find(c=>String(c.name).toLowerCase()==="food")||ws.categories.find(c=>String(c.name).toLowerCase().includes("food"));
-      if(coffee&&food)return [{categoryId:String(coffee.id),qty:1},{categoryId:String(food.id),qty:1}];
+      if(coffee&&food)return [{categoryId:String(coffee.id),qty:1,productIds:[]},{categoryId:String(food.id),qty:1,productIds:[]}];
     }
     return [];
   };
@@ -378,15 +386,16 @@ function POS({ws,reload,notify}) {
   const discount=promoBundles.length?promoDiscount:specialDiscount;
   const total=Math.max(0,subtotal-discount);
 
-  const add=p=>setCart(cur=>{const f=cur.find(i=>i.id===p.id);return f?cur.map(i=>i.id===p.id?{...i,qty:i.qty+1}:i):[...cur,{...p,qty:1}]});
+  const add=p=>{if(branchMaintenance)return;setCart(cur=>{const f=cur.find(i=>i.id===p.id);return f?cur.map(i=>i.id===p.id?{...i,qty:i.qty+1}:i):[...cur,{...p,qty:1}]})};
   const qty=(id,d)=>setCart(cur=>cur.map(i=>i.id===id?{...i,qty:i.qty+d}:i).filter(i=>i.qty>0));
   const openPromo=p=>{
+    if(branchMaintenance)return;
     const rules=promoRules(p);
     if(!rules.length){notify("This promo has no category rules yet. Edit it under Customers & Promos.","warn");return;}
     const slots=[];
     rules.forEach(rule=>{
       const cat=ws.categories.find(c=>String(c.id)===String(rule.categoryId));
-      for(let i=0;i<Number(rule.qty);i++)slots.push({categoryId:String(rule.categoryId),label:cat?.name||"Category",productId:""});
+      for(let i=0;i<Number(rule.qty);i++)slots.push({categoryId:String(rule.categoryId),label:cat?.name||"Category",productId:"",productIds:rule.productIds||[]});
     });
     setPromoBuilder({promo:p,slots});
   };
@@ -410,50 +419,96 @@ function POS({ws,reload,notify}) {
   };
 
   const clearOrder=()=>{setCart([]);setPromoBundles([]);setSpecialDiscountType("");setSpecialDiscountReference("");setReference("");setTendered("");setCustomerId("");};
+  const orderLines=()=>[
+    ...cart.map(i=>({name:i.name,qty:i.qty,unit:Number(i.price),total:Number(i.price)*i.qty})),
+    ...promoBundles.flatMap(b=>b.items.map(x=>({name:b.name+" · "+x.name,qty:x.qty,unit:null,total:null})))
+  ];
+
+  const openPayment=()=>{
+    if(branchMaintenance)return notify((selectedBranch?.name||"This branch")+" is under maintenance. POS is temporarily disabled.","error");
+    if(!cart.length&&!promoBundles.length)return notify("Add at least one product or promo.","error");
+    if(specialDiscountType&&!specialDiscountReference.trim())return notify("Senior/PWD ID or reference is required before payment.","error");
+    setPaymentMethod("cash");setReference("");setTendered("");setSuccessReceipt(null);setPaymentOpen(true);
+  };
 
   const checkout=async()=>{
+    if(paymentMethod==="cash"&&(!tendered||Number(tendered)<total))return notify("Enter tendered cash equal to or greater than the amount due.","error");
+    if(paymentMethod==="gcash"&&!reference.trim())return notify("GCash payment reference is required.","error");
     setBusy(true);
+    const snapshot={
+      branch:selectedBranch?.name||"Branch",
+      customer:ws.customers.find(c=>String(c.id)===String(customerId))?.name||"Walk-in customer",
+      subtotal,discount,total,paymentMethod,
+      tendered:paymentMethod==="cash"?Number(tendered):null,
+      changeDue:paymentMethod==="cash"?Math.max(0,Number(tendered)-total):0,
+      specialDiscountType,specialDiscountReference,
+      promoNames:promoBundles.map(b=>b.name),
+      lines:orderLines()
+    };
     try{
       const result=await api("/pos/checkout",{method:"POST",body:{
-        branchId,paymentMethod,paymentReference:reference,tendered:tendered?Number(tendered):total,
+        branchId,paymentMethod,paymentReference:reference,tendered:paymentMethod==="cash"?Number(tendered):null,
         customerId:customerId||null,specialDiscountType:specialDiscountType||null,specialDiscountReference,
         items:cart.map(i=>({productId:String(i.id),qty:i.qty})),
         promoBundles:promoBundles.map(b=>({promoId:b.promoId,selections:b.selections}))
       }});
+      setSuccessReceipt({...snapshot,...result,referenceNo:result.referenceNo,paymentReference:reference,createdAt:new Date().toISOString()});
       notify(result.referenceNo+" completed · "+money(result.total),result.lowStockNames?.length?"warn":"");
       if(result.lowStockNames?.length)setTimeout(()=>notify("Low stock: "+result.lowStockNames.join(", "),"warn"),600);
       clearOrder();await reload();
     }catch(err){notify(err.message,"error");}finally{setBusy(false);}
   };
 
-  return <div className="pos">
-    <section className="catalog">
-      <div className="catalog-top"><div className="search"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={category==="Promos"?"Search promos…":"Search menu…"}/></div><select value={branchId} disabled={Boolean(assignedBranchId)} onChange={e=>setBranchId(e.target.value)}>{ws.branches.filter(b=>!assignedBranchId||String(b.id)===assignedBranchId).map(b=><option key={b.id} value={b.id}>{b.name}{assignedBranchId?" · assigned":""}</option>)}</select></div>
-      <div className="chips">{["All",...categoryNames,"Promos"].map(c=><button key={c} className={category===c?"active":""} onClick={()=>setCategory(c)}>{c}</button>)}</div>
-      {category!=="Promos"?<div className="products">{products.map(p=><button className="product" key={p.id} onClick={()=>add(p)}><span>{p.category_name==="Food"?"🥐":"☕"}</span><b>{p.name}</b><small>{p.category_name}</small><strong>{money(p.price)}</strong><i><Plus size={14}/></i></button>)}</div>:<div className="promo-catalog">{activePromos.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())).map(p=>{const rules=promoRules(p);return <button className="promo-product" key={p.id} onClick={()=>openPromo(p)}><span className="promo-icon"><Tags/></span><b>{p.name}</b><small>{rules.length?rules.map(r=>{const c=ws.categories.find(x=>String(x.id)===String(r.categoryId));return r.qty+"× "+(c?.name||"Category")}).join(" + "):"Needs promo rules"}</small><strong>{p.promo_type==="set_price"?money(p.value)+" set price":p.promo_type==="percentage"?p.value+"% off":money(p.value)+" off"}</strong><i><Plus size={14}/></i></button>})}{!activePromos.length&&<Empty Icon={Tags} text="No active promos configured."/>}</div>}
+  const printInvoice=receipt=>{
+    const w=window.open("","_blank","width=520,height=760");
+    if(!w)return notify("Allow pop-ups to print the invoice.","warn");
+    const esc=v=>String(v??"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+    w.document.write(`<!doctype html><html><head><title>${esc(receipt.referenceNo)}</title><style>body{font-family:Arial,sans-serif;width:320px;margin:0 auto;padding:24px;color:#111}h1{font-size:20px;text-align:center;margin:0}.sub{text-align:center;font-size:11px;margin:4px 0 16px}.row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:11px}.line{border-bottom:1px dashed #aaa;padding:7px 0}.line b,.line small{display:block}.line small{font-size:9px}.total{font-size:16px;font-weight:bold;border-top:1px dashed #333;margin-top:8px;padding-top:10px}.foot{text-align:center;margin-top:18px;font-size:9px}@media print{body{padding:0}}</style></head><body><h1>BrewPoint</h1><div class="sub">${esc(ws.business.name)} · ${esc(receipt.branch)}<br>${esc(dateTime(receipt.createdAt))}</div><div class="row"><span>Invoice</span><b>${esc(receipt.referenceNo)}</b></div><div class="row"><span>Customer</span><b>${esc(receipt.customer)}</b></div>${receipt.lines.map(x=>`<div class="line"><b>${esc(x.name)}</b><small>${esc(x.qty)} × ${x.unit==null?"Promo selection":esc(money(x.unit))}</small>${x.total==null?"":`<div class="row"><span></span><b>${esc(money(x.total))}</b></div>`}</div>`).join("")}<div class="row"><span>Subtotal</span><b>${esc(money(receipt.subtotal))}</b></div><div class="row"><span>Discount</span><b>-${esc(money(receipt.discount))}</b></div><div class="row total"><span>Total</span><b>${esc(money(receipt.total))}</b></div><div class="row"><span>Payment</span><b>${esc(String(receipt.paymentMethod).toUpperCase())}</b></div>${receipt.paymentMethod==="cash"?`<div class="row"><span>Tendered</span><b>${esc(money(receipt.tendered))}</b></div><div class="row"><span>Change</span><b>${esc(money(receipt.changeDue))}</b></div>`:`<div class="row"><span>GCash ref.</span><b>${esc(receipt.paymentReference)}</b></div>`}<div class="foot">Thank you for choosing ${esc(ws.business.name)}.</div><script>window.onload=()=>window.print()<\/script></body></html>`);
+    w.document.close();
+  };
+
+  return <div className="pos" data-guide="pos-root">
+    <section className="catalog" data-guide="pos-catalog">
+      <div className="catalog-top"><div className="search"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={category==="Promos"?"Search promos…":"Search menu…"}/></div><select value={branchId} disabled={Boolean(assignedBranchId)} onChange={e=>setBranchId(e.target.value)}>{ws.branches.filter(b=>!assignedBranchId||String(b.id)===assignedBranchId).map(b=><option key={b.id} value={b.id}>{b.name}{b.is_maintenance?" · maintenance":assignedBranchId?" · assigned":""}</option>)}</select></div>
+      {branchMaintenance&&<div className="maintenance-banner"><ShieldCheck/><div><b>{selectedBranch?.name} is Under Maintenance</b><span>This branch cannot create POS transactions until the Owner/Admin reopens it from Team & Branches.</span></div></div>}
+      <div className="chips" data-guide="pos-categories">{["All",...categoryNames,"Promos"].map(c=><button key={c} className={category===c?"active":""} onClick={()=>setCategory(c)} disabled={branchMaintenance}>{c}</button>)}</div>
+      {category!=="Promos"?<div className="products">{products.map(p=><button className="product" disabled={branchMaintenance} key={p.id} onClick={()=>add(p)}><span>{p.category_name==="Food"?"🥐":"☕"}</span><b>{p.name}</b><small>{p.category_name}</small><strong>{money(p.price)}</strong><i><Plus size={14}/></i></button>)}</div>:<div className="promo-catalog">{activePromos.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())).map(p=>{const rules=promoRules(p);return <button className="promo-product" disabled={branchMaintenance} key={p.id} onClick={()=>openPromo(p)}><span className="promo-icon"><Tags/></span><b>{p.name}</b><small>{rules.length?rules.map(r=>{const c=ws.categories.find(x=>String(x.id)===String(r.categoryId));return r.qty+"× "+(c?.name||"Category")+(r.productIds?.length?" · restricted":"")}).join(" + "):"Needs promo rules"}</small><strong>{p.promo_type==="set_price"?money(p.value)+" set price":p.promo_type==="percentage"?p.value+"% off":money(p.value)+" off"}</strong><i><Plus size={14}/></i></button>})}{!activePromos.length&&<Empty Icon={Tags} text="No active promos configured."/>}</div>}
     </section>
 
-    <aside className="cart">
+    <aside className="cart" data-guide="pos-order">
       <header><div><h3>Current order</h3><small>{cart.reduce((s,i)=>s+i.qty,0)+promoBundles.reduce((s,b)=>s+b.selections.reduce((n,x)=>n+x.qty,0),0)} item(s)</small></div><button className="icon-btn" onClick={clearOrder}><Trash2 size={16}/></button></header>
       <div className="cart-lines">
         {cart.map(i=><div className="cart-line" key={i.id}><div><b>{i.name}</b><strong>{money(Number(i.price)*i.qty)}</strong></div><small>{money(i.price)} each</small><div className="qty"><button onClick={()=>qty(i.id,-1)}><Minus/></button><span>{i.qty}</span><button onClick={()=>qty(i.id,1)}><Plus/></button></div></div>)}
         {promoBundles.map(b=><div className="cart-line promo-cart-line" key={b.id}><div><b>{b.name}</b><strong>{money(b.total)}</strong></div><small>{b.items.map(x=>x.qty+"× "+x.name).join(" · ")} · save {money(b.discount)}</small><button className="remove-promo" onClick={()=>setPromoBundles(cur=>cur.filter(x=>x.id!==b.id))}>Remove promo</button></div>)}
         {!cart.length&&!promoBundles.length&&<Empty text="Tap a product or open the Promos category."/>}
       </div>
-      <div className="checkout">
+      <div className="checkout" data-guide="pos-discount">
         <label>Customer<select value={customerId} onChange={e=>setCustomerId(e.target.value)}><option value="">Walk-in customer</option>{ws.customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-        <label>Senior / PWD discount<select value={specialDiscountType} disabled={promoBundles.length>0} onChange={e=>{setSpecialDiscountType(e.target.value);setSpecialDiscountReference("")}}><option value="">No special discount</option><option value="senior">Senior Citizen · 20%</option><option value="pwd">PWD · 20%</option></select></label>
-        {promoBundles.length>0&&<div className="discount-lock"><Tags size={13}/>Senior/PWD discount is disabled while a promo is in the order.</div>}
-        {specialDiscountType&&<label>{specialDiscountType==="senior"?"Senior ID / reference":"PWD ID / reference"}<input value={specialDiscountReference} onChange={e=>setSpecialDiscountReference(e.target.value)} placeholder="Optional reference for audit"/></label>}
+        <label>Senior / PWD discount<select value={specialDiscountType} disabled={promoBundles.length>0||branchMaintenance} onChange={e=>{setSpecialDiscountType(e.target.value);setSpecialDiscountReference("")}}><option value="">No special discount</option><option value="senior">Senior Citizen · 20%</option><option value="pwd">PWD · 20%</option></select></label>
+        {promoBundles.length>0&&<div className="discount-lock"><Tags size={13}/>Senior/PWD cannot be combined with an existing promo.</div>}
+        {specialDiscountType&&<label>{specialDiscountType==="senior"?"Senior ID / reference *":"PWD ID / reference *"}<input required value={specialDiscountReference} onChange={e=>setSpecialDiscountReference(e.target.value)} placeholder="Required before payment"/></label>}
         {discount>0&&<div className="summary-line"><span>{promoBundles.length?"Promo savings":specialDiscountType==="senior"?"Senior Citizen 20%":"PWD 20%"}</span><b>-{money(discount)}</b></div>}
         <div className="total"><span>Total</span><strong>{money(total)}</strong></div>
-        <div className="pay-tabs"><button className={paymentMethod==="cash"?"active":""} onClick={()=>setPaymentMethod("cash")}>Cash</button><button className={paymentMethod==="gcash"?"active":""} onClick={()=>setPaymentMethod("gcash")}>GCash</button></div>
-        {paymentMethod==="cash"?<input type="number" value={tendered} onChange={e=>setTendered(e.target.value)} placeholder={"Tendered · minimum "+total}/>:<div className="gcash-pay-box">{ws.business.gcashQrData?<><div className="gcash-qr-wrap"><img src={ws.business.gcashQrData} alt="GCash payment QR"/></div><b>Scan to pay with GCash</b><small>{[ws.business.gcashAccountName,ws.business.gcashAccountNumber].filter(Boolean).join(" · ")||"Store GCash account"}</small></>:<div className="gcash-no-qr"><QrCode/><b>GCash QR is not configured yet.</b><small>Ask the café owner/admin to upload it under Team & Branches.</small></div>}<input value={reference} onChange={e=>setReference(e.target.value)} placeholder="GCash payment reference"/></div>}
-        <button className="btn primary wide" disabled={(!cart.length&&!promoBundles.length)||busy||(paymentMethod==="gcash"&&!reference.trim())||(paymentMethod==="cash"&&tendered&&Number(tendered)<total)} onClick={checkout}>{busy?"Processing…":"Pay "+money(total)}</button>
+        <button className="btn primary wide pay-open" disabled={branchMaintenance||(!cart.length&&!promoBundles.length)||(specialDiscountType&&!specialDiscountReference.trim())} onClick={openPayment}>Proceed to payment</button>
       </div>
     </aside>
 
-    {promoBuilder&&<div className="modal-overlay"><div className="promo-builder"><header><div><span className="pill">PROMO BUILDER</span><h2>{promoBuilder.promo.name}</h2><p>Select the required products. Only products from the registered promo categories can be chosen.</p></div><button className="icon-btn" onClick={()=>setPromoBuilder(null)}><X/></button></header><div className="promo-slots">{promoBuilder.slots.map((slot,idx)=>{const eligible=ws.products.filter(p=>p.is_active&&String(p.category_id)===String(slot.categoryId));return <label key={idx}>{slot.label} #{idx+1}<select value={slot.productId} onChange={e=>setPromoSlot(idx,e.target.value)}><option value="">Select {slot.label}</option>{eligible.map(p=><option key={p.id} value={p.id}>{p.name} · {money(p.price)}</option>)}</select></label>})}</div><div className="promo-builder-total"><span>Promo price</span><strong>{promoBuilder.promo.promo_type==="set_price"?money(promoBuilder.promo.value):promoBuilder.promo.promo_type==="percentage"?promoBuilder.promo.value+"% off":money(promoBuilder.promo.value)+" off"}</strong></div><div className="form-actions"><button className="btn secondary" onClick={()=>setPromoBuilder(null)}>Cancel</button><button className="btn primary" disabled={promoBuilder.slots.some(s=>!s.productId)} onClick={addPromoBundle}>Add promo to order</button></div></div></div>}
+    {promoBuilder&&<div className="modal-overlay"><div className="promo-builder"><header><div><span className="pill">PROMO BUILDER</span><h2>{promoBuilder.promo.name}</h2><p>Select only from the exact products authorized by the Owner/Admin for each promo requirement.</p></div><button className="icon-btn" onClick={()=>setPromoBuilder(null)}><X/></button></header><div className="promo-slots">{promoBuilder.slots.map((slot,idx)=>{let eligible=ws.products.filter(p=>p.is_active&&String(p.category_id)===String(slot.categoryId));if(slot.productIds?.length)eligible=eligible.filter(p=>slot.productIds.includes(String(p.id)));return <label key={idx}>{slot.label} #{idx+1}<select required value={slot.productId} onChange={e=>setPromoSlot(idx,e.target.value)}><option value="">Select {slot.label}</option>{eligible.map(p=><option key={p.id} value={p.id}>{p.name} · {money(p.price)}</option>)}</select>{!eligible.length&&<small className="field-error">No allowed products are available for this slot.</small>}</label>})}</div><div className="promo-builder-total"><span>Promo price</span><strong>{promoBuilder.promo.promo_type==="set_price"?money(promoBuilder.promo.value):promoBuilder.promo.promo_type==="percentage"?promoBuilder.promo.value+"% off":money(promoBuilder.promo.value)+" off"}</strong></div><div className="form-actions"><button className="btn secondary" onClick={()=>setPromoBuilder(null)}>Cancel</button><button className="btn primary" disabled={promoBuilder.slots.some(s=>!s.productId)} onClick={addPromoBundle}>Add promo to order</button></div></div></div>}
+
+    {paymentOpen&&<div className="modal-overlay payment-modal-overlay"><div className="payment-modal" data-guide="payment-modal">
+      {!successReceipt?<>
+        <header className="payment-head"><button className="back-pay" onClick={()=>setPaymentOpen(false)}>← Back to sale</button><div><span>Amount to pay</span><strong>{money(total)}</strong></div><button className="icon-btn" onClick={()=>setPaymentOpen(false)}><X/></button></header>
+        <div className="payment-layout">
+          <section className="payment-entry">
+            <h3>Select mode of payment</h3>
+            <div className="payment-method-cards"><button className={paymentMethod==="cash"?"active":""} onClick={()=>setPaymentMethod("cash")}>Cash</button><button className={paymentMethod==="gcash"?"active":""} onClick={()=>setPaymentMethod("gcash")}>GCash QR</button></div>
+            {paymentMethod==="cash"?<div className="cash-entry"><label>Tendered amount *<input autoFocus type="number" min={total} value={tendered} onChange={e=>setTendered(e.target.value)} placeholder={money(total)}/></label><div className="quick-cash"><button onClick={()=>setTendered(String(total))}>Exact {money(total)}</button>{[100,200,500,1000].filter(v=>v>=total).slice(0,3).map(v=><button key={v} onClick={()=>setTendered(String(v))}>{money(v)}</button>)}</div>{tendered&&Number(tendered)>=total&&<div className="change-preview"><span>Change</span><strong>{money(Number(tendered)-total)}</strong></div>}</div>:<div className="gcash-modal-pay">{ws.business.gcashQrData?<img src={ws.business.gcashQrData} alt="GCash QR"/>:<QrCode className="missing-qr"/>}<div><b>Scan the café's GCash QR</b><small>{[ws.business.gcashAccountName,ws.business.gcashAccountNumber].filter(Boolean).join(" · ")||"QR not configured by Owner/Admin"}</small></div><label>GCash reference *<input required value={reference} onChange={e=>setReference(e.target.value)} placeholder="Enter payment reference after successful scan"/></label></div>}
+            <button className="btn primary wide confirm-payment" disabled={busy||(paymentMethod==="cash"&&(!tendered||Number(tendered)<total))||(paymentMethod==="gcash"&&(!ws.business.gcashQrData||!reference.trim()))} onClick={checkout}>{busy?"Processing…":"Confirm payment & generate invoice"}</button>
+          </section>
+          <aside className="payment-summary"><h3>Sale summary</h3><div className="payment-summary-lines">{cart.map(i=><div key={i.id}><span><b>{i.name}</b><small>{i.qty} × {money(i.price)}</small></span><strong>{money(Number(i.price)*i.qty)}</strong></div>)}{promoBundles.map(b=><div key={b.id}><span><b>{b.name}</b><small>{b.items.map(x=>x.qty+"× "+x.name).join(" · ")}</small></span><strong>{money(b.total)}</strong></div>)}</div><div className="payment-summary-totals"><div><span>Subtotal</span><b>{money(subtotal)}</b></div><div><span>Discount</span><b>-{money(discount)}</b></div><div className="grand"><span>Grand total</span><strong>{money(total)}</strong></div></div></aside>
+        </div>
+      </>:<div className="payment-success"><div className="success-icon"><Check/></div><h2>Payment successful</h2><p>Order <b>{successReceipt.referenceNo}</b> has been successfully placed.</p><div className="success-total"><span>Paid</span><strong>{money(successReceipt.total)}</strong></div>{successReceipt.paymentMethod==="cash"&&<div className="success-change"><span>Change</span><b>{money(successReceipt.changeDue)}</b></div>}<div className="success-actions"><button className="btn primary" onClick={()=>printInvoice(successReceipt)}><Printer/>Print invoice</button><button className="btn secondary" onClick={()=>{setPaymentOpen(false);setSuccessReceipt(null)}}>New sale</button></div></div>}
+    </div></div>}
   </div>;
 }
 
